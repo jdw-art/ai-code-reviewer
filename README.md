@@ -125,6 +125,7 @@ streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
 ```
 
 ### 配置 GitLab Webhook
+> github 同理，配置方法与 GitLab 相同
 
 #### 1. 创建Access Token
 
@@ -175,6 +176,3 @@ python -m biz.cmd.review
 
 运行后，请按照命令行中的提示进行操作即可。
 
-**2.其它常见问题**
-
-参见 [常见问题](doc/faq.md)
