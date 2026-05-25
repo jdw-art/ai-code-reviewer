@@ -1,7 +1,5 @@
 ![Push图片](doc/img/open/ai-codereview-cartoon.png)
 
-[开源版](README.md) | 
-[Pro版](doc/pro.md)
 
 ## 项目简介
 
@@ -180,54 +178,3 @@ python -m biz.cmd.review
 **2.其它常见问题**
 
 参见 [常见问题](doc/faq.md)
-
-## 相关项目
-
-### 1. Code Review Pro 版
-
-功能更丰富的 AI Code Review 版本。
-
-体验站: [https://demo.mzfuture.com](https://demo.mzfuture.com)
-
-项目介绍与使用说明：[Code Review Pro 版](doc/pro.md)
-
-快速安装命令：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sunmh207/AI-Codereview-Gitlab/refs/heads/main/scripts/pro/install.sh | bash
-```
-
-**多种统计图**
-
-![多种统计图](doc/img/pro/dashboard.png)
-
-**成员提交分析**
-
-![成员提交分析](doc/img/pro/member-analysis.png)
-
-**Deep Review**
-
-![Deep Review](doc/img/pro/deepreview.png)
-
-**项目哨兵**
-
-![项目哨兵](doc/img/pro/project-analysis-plan.png)
-
-### 2. Entire Dashboard
-
-如果你正在使用 AI Agent 开发工具 (如: Cursor、Claude Code、Codex ...)，并希望对人机交互过程进行全面的记录与回溯分析，推荐使用 [Entire Dashboard](https://github.com/sunmh207/entire-dashboard)。该项目提供了完整的人机交互记录与可视化分析功能，可帮助你深入理解 AI Agent 的使用模式，优化交互体验，提升开发效率。
-
-## 交流
-
-若本项目对您有帮助，欢迎 Star ⭐️ 或 Fork。 有任何问题或建议，欢迎提交 Issue 或 PR。
-
-也欢迎加微信/微信群，一起交流学习。
-
-<p float="left">
-  <img src="doc/img/open/wechat.jpg" width="400" />
-  <img src="doc/img/open/wechat_group.jpg" width="400" /> 
-</p>
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=sunmh207/AI-Codereview-Gitlab&type=Timeline)](https://www.star-history.com/#sunmh207/AI-Codereview-Gitlab&Timeline)
