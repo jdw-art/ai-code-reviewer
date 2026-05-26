@@ -26,11 +26,13 @@ class ContextCollector:
 
             content = result.content
             truncated = result.truncated
+            collector_truncated = False
             if len(content) > plan.budget.max_file_chars:
                 content = content[: plan.budget.max_file_chars]
                 truncated = True
+                collector_truncated = True
 
-            if truncated:
+            if collector_truncated:
                 warnings.append(f"Truncated {action.path} to {plan.budget.max_file_chars} characters")
 
             contexts.append(

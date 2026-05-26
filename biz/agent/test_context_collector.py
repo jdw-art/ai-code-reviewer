@@ -11,6 +11,8 @@ class FakeReader:
     def read_file(self, path, ref):
         if path not in self.files:
             return FileReadResult(path=path, ref=ref, ok=False, error="missing")
+        if isinstance(self.files[path], FileReadResult):
+            return self.files[path]
         return FileReadResult(path=path, ref=ref, ok=True, content=self.files[path])
 
 
@@ -42,6 +44,20 @@ class TestContextCollector(TestCase):
         self.assertEqual(contexts[0].content, "abcd")
         self.assertTrue(contexts[0].truncated)
         self.assertIn("Truncated src/app.py to 4 characters", warnings)
+
+    def test_does_not_warn_when_only_reader_truncated(self):
+        plan = InvestigationPlan(
+            actions=[InvestigationAction("read_changed_file", "src/app.py", "abc123", "changed file", 10)],
+            budget=ContextBudget(max_context_files=5, max_file_chars=100),
+        )
+
+        contexts, warnings = ContextCollector().collect(
+            plan,
+            FakeReader({"src/app.py": FileReadResult(path="src/app.py", ref="abc123", ok=True, content="abcd", truncated=True)}),
+        )
+
+        self.assertTrue(contexts[0].truncated)
+        self.assertNotIn("Truncated src/app.py to 100 characters", warnings)
 
 
 if __name__ == "__main__":
