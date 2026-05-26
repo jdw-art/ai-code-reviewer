@@ -1,7 +1,11 @@
+import json
 import os
 import traceback
 from datetime import datetime
 
+from biz.agent.review_agent import ReviewAgent
+from biz.agent.task import ReviewTask
+from biz.agent.tools.file_reader import GitHubFileReader
 from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
 from biz.event.event_manager import event_manager
 from biz.platforms.gitlab.webhook_handler import filter_changes, MergeRequestHandler, PushHandler
@@ -275,7 +279,37 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
 
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        agent_trace = ""
+        agent_review_enabled = os.environ.get('AGENT_REVIEW_ENABLED', '0') == '1'
+        if agent_review_enabled:
+            try:
+                task = ReviewTask(
+                    platform="github",
+                    project_id=webhook_data['repository']['full_name'],
+                    project_name=webhook_data['repository']['name'],
+                    source_branch=webhook_data['pull_request']['head']['ref'],
+                    target_branch=webhook_data['pull_request']['base']['ref'],
+                    change_ref=github_last_commit_id,
+                    author=webhook_data['pull_request']['user']['login'],
+                    url=webhook_data['pull_request']['html_url'],
+                    commits=commits,
+                    changes=changes,
+                    access_token=github_token,
+                    platform_url=github_url,
+                )
+                file_reader = GitHubFileReader(
+                    repo_full_name=webhook_data['repository']['full_name'],
+                    token=github_token,
+                    max_file_chars=int(os.environ.get('AGENT_MAX_FILE_CHARS', 30000)),
+                )
+                agent_result = ReviewAgent(file_reader=file_reader).review(task)
+                review_result = agent_result.review_text
+                agent_trace = json.dumps(agent_result.agent_trace, ensure_ascii=False)
+            except Exception as agent_error:
+                logger.error(f"GitHub Agent review failed, falling back to classic review: {agent_error}")
+                review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        else:
+            review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
 
         # 将review结果提交到GitHub的 notes
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
@@ -297,6 +331,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=github_last_commit_id,
+                agent_trace=agent_trace,
             ))
 
     except Exception as e:
