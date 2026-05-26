@@ -14,7 +14,7 @@ class ReviewTask:
     url: str
     commits: list[dict[str, Any]]
     changes: list[dict[str, Any]]
-    access_token: str
+    access_token: str = field(repr=False)
     platform_url: str
 
     @property
