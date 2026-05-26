@@ -28,7 +28,7 @@ The current pipeline is deterministic and single-step. The LLM does not choose t
 Included in the first version:
 
 - MR/PR review only.
-- GitLab, GitHub, and Gitea compatibility through a shared file reader interface.
+- GitHub PR support first, followed by GitLab MR and Gitea PR through the same shared file reader interface.
 - API-based file reading; no local clone.
 - Diff analysis using lightweight rules.
 - Rule-driven investigation planning.
@@ -261,8 +261,8 @@ class PlatformFileReader:
 
 Implementations:
 
-- `GitLabFileReader`
 - `GitHubFileReader`
+- `GitLabFileReader`
 - `GiteaFileReader`
 
 First-version requirement:
@@ -383,13 +383,13 @@ Add focused tests for:
 3. Add `Planner`.
 4. Add fake-reader based `ContextCollector`.
 5. Add `EvidenceBuilder` and Agent prompt.
-6. Add GitLab file reader.
-7. Wire GitLab MR handler through `AGENT_REVIEW_ENABLED`.
-8. Add GitHub and Gitea file readers and PR integration.
+6. Add GitHub file reader.
+7. Wire GitHub PR handler through `AGENT_REVIEW_ENABLED`.
+8. Add GitLab and Gitea file readers and MR/PR integration.
 9. Add `agent_trace` persistence.
 10. Add tests for Agent modules and file readers.
 
-GitLab should be integrated first because the project is GitLab-first historically and its existing handler is the most complete.
+GitHub should be integrated first because the project will prioritize GitHub PR review as the first Agent rollout target. The shared file reader interface should still be designed so GitLab and Gitea can be added without changing Agent internals.
 
 ## Success Criteria
 
