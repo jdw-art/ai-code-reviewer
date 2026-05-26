@@ -1,4 +1,6 @@
+import os
 import sqlite3
+from contextlib import closing
 
 import pandas as pd
 
@@ -6,13 +8,13 @@ from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
 
 
 class ReviewService:
-    DB_FILE = "data/data.db"
+    DB_FILE = os.getenv("REVIEW_DB_FILE", "data/data.db")
 
     @staticmethod
     def init_db():
         """初始化数据库及表结构"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS mr_review_log (
@@ -88,7 +90,7 @@ class ReviewService:
     def insert_mr_review_log(entity: MergeRequestReviewEntity):
         """插入合并请求审核日志"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                                 INSERT INTO mr_review_log (project_name,author, source_branch, target_branch, 
@@ -106,15 +108,21 @@ class ReviewService:
 
     @staticmethod
     def get_mr_review_logs(authors: list = None, project_names: list = None, updated_at_gte: int = None,
-                           updated_at_lte: int = None) -> pd.DataFrame:
+                           updated_at_lte: int = None, include_agent_trace: bool = False) -> pd.DataFrame:
         """获取符合条件的合并请求审核日志"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                columns = (
+                    "project_name, author, source_branch, target_branch, updated_at, commit_messages, score, url, "
+                    "review_result, additions, deletions"
+                )
+                if include_agent_trace:
+                    columns += ", agent_trace"
                 query = """
-                            SELECT project_name, author, source_branch, target_branch, updated_at, commit_messages, score, url, review_result, additions, deletions, agent_trace
+                            SELECT {columns}
                             FROM mr_review_log
                             WHERE 1=1
-                            """
+                            """.format(columns=columns)
                 params = []
 
                 if authors:
