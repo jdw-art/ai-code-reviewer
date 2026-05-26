@@ -78,6 +78,23 @@ class TestInvestigationPlanner(TestCase):
         self.assertIn("read_changed_file", action_types)
         self.assertEqual(action_types.count("find_related_test"), 1)
 
+    def test_reserved_related_test_matches_retained_changed_file(self):
+        analysis = DiffAnalysis(
+            files=[
+                ChangedFile("z_risky.py", "python", 1, 0, False, False, risk_tags=["security"]),
+                ChangedFile("a_low.py", "python", 1, 0, False, False),
+            ],
+            total_additions=2,
+            total_deletions=0,
+        )
+
+        plan = InvestigationPlanner(ContextBudget(max_context_files=2)).create_plan(self._task(), analysis)
+        action_pairs = [(action.action_type, action.path) for action in plan.actions]
+
+        self.assertIn(("read_changed_file", "z_risky.py"), action_pairs)
+        self.assertIn(("find_related_test", "tests/test_z_risky.py"), action_pairs)
+        self.assertNotIn(("find_related_test", "tests/test_a_low.py"), action_pairs)
+
 
 if __name__ == "__main__":
     main()

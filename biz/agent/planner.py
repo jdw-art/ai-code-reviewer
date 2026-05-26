@@ -15,21 +15,21 @@ class InvestigationPlanner:
 
     def create_plan(self, task: ReviewTask, analysis: DiffAnalysis) -> InvestigationPlan:
         changed_file_actions: list[InvestigationAction] = []
-        test_actions: list[InvestigationAction] = []
+        test_actions_by_path: dict[str, list[InvestigationAction]] = {}
         for changed_file in analysis.files:
             priority = 10 if changed_file.risk_tags else 20
-            changed_file_actions.append(
-                InvestigationAction(
-                    action_type="read_changed_file",
-                    path=changed_file.path,
-                    ref=task.effective_ref,
-                    reason="Read changed file context for the PR head ref.",
-                    priority=priority,
-                )
+            changed_file_action = InvestigationAction(
+                action_type="read_changed_file",
+                path=changed_file.path,
+                ref=task.effective_ref,
+                reason="Read changed file context for the PR head ref.",
+                priority=priority,
             )
+            changed_file_actions.append(changed_file_action)
             if not changed_file.is_test:
+                test_actions_by_path[changed_file.path] = []
                 for candidate in self._test_candidates(changed_file.path)[: self.budget.max_test_files]:
-                    test_actions.append(
+                    test_actions_by_path[changed_file.path].append(
                         InvestigationAction(
                             action_type="find_related_test",
                             path=candidate,
@@ -40,20 +40,38 @@ class InvestigationPlanner:
                     )
 
         changed_file_actions.sort(key=lambda item: (item.priority, item.path))
-        test_actions.sort(key=lambda item: (item.priority, item.path))
 
         selected_actions = changed_file_actions[: self.budget.max_context_files]
         if (
-            test_actions
+            test_actions_by_path
             and self.budget.max_context_files > 1
             and len(changed_file_actions) >= self.budget.max_context_files
         ):
-            selected_actions = selected_actions[: self.budget.max_context_files - 1] + test_actions[:1]
+            retained_changed_file_actions = selected_actions[: self.budget.max_context_files - 1]
+            reserved_test_action = self._first_test_action_for_changed_files(retained_changed_file_actions, test_actions_by_path)
+            if reserved_test_action:
+                selected_actions = retained_changed_file_actions + [reserved_test_action]
         else:
             remaining_slots = self.budget.max_context_files - len(selected_actions)
+            test_actions = [
+                test_action
+                for changed_file_action in changed_file_actions
+                for test_action in test_actions_by_path.get(changed_file_action.path, [])
+            ]
             selected_actions.extend(test_actions[:remaining_slots])
 
         return InvestigationPlan(actions=selected_actions, budget=self.budget)
+
+    def _first_test_action_for_changed_files(
+        self,
+        changed_file_actions: list[InvestigationAction],
+        test_actions_by_path: dict[str, list[InvestigationAction]],
+    ) -> InvestigationAction | None:
+        for changed_file_action in changed_file_actions:
+            test_actions = test_actions_by_path.get(changed_file_action.path, [])
+            if test_actions:
+                return test_actions[0]
+        return None
 
     def _test_candidates(self, path: str) -> list[str]:
         directory, filename = os.path.split(path)
