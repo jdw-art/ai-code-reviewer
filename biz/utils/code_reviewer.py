@@ -106,3 +106,25 @@ class CodeReviewer(BaseReviewer):
         match = re.search(r"总分[:：]\s*(\d+)分?", review_text)
         return int(match.group(1)) if match else 0
 
+
+class AgentCodeReviewer(BaseReviewer):
+    """Investigation-style review based on structured evidence."""
+
+    def __init__(self):
+        super().__init__("agent_code_review_prompt")
+
+    def review_evidence(self, evidence_text: str) -> str:
+        review_result = self.review_code(evidence_text).strip()
+        if review_result.startswith("```markdown") and review_result.endswith("```"):
+            return review_result[11:-3].strip()
+        return review_result
+
+    def review_code(self, evidence_text: str) -> str:
+        messages = [
+            self.prompts["system_message"],
+            {
+                "role": "user",
+                "content": self.prompts["user_message"]["content"].format(evidence_text=evidence_text),
+            },
+        ]
+        return self.call_llm(messages)
