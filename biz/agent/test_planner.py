@@ -47,9 +47,9 @@ class TestInvestigationPlanner(TestCase):
     def test_respects_max_context_files(self):
         analysis = DiffAnalysis(
             files=[
-                ChangedFile("a.py", "python", 1, 0, False, False),
-                ChangedFile("b.py", "python", 1, 0, False, False),
-                ChangedFile("c.py", "python", 1, 0, False, False),
+                ChangedFile("test_a.py", "python", 1, 0, True, False),
+                ChangedFile("test_b.py", "python", 1, 0, True, False),
+                ChangedFile("test_c.py", "python", 1, 0, True, False),
             ],
             total_additions=3,
             total_deletions=0,
@@ -59,6 +59,24 @@ class TestInvestigationPlanner(TestCase):
 
         self.assertEqual(len(plan.actions), 2)
         self.assertEqual([action.action_type for action in plan.actions], ["read_changed_file", "read_changed_file"])
+
+    def test_preserves_related_test_when_changed_files_fill_budget(self):
+        analysis = DiffAnalysis(
+            files=[
+                ChangedFile("a.py", "python", 1, 0, False, False),
+                ChangedFile("b.py", "python", 1, 0, False, False),
+                ChangedFile("c.py", "python", 1, 0, False, False),
+            ],
+            total_additions=3,
+            total_deletions=0,
+        )
+
+        plan = InvestigationPlanner(ContextBudget(max_context_files=2)).create_plan(self._task(), analysis)
+        action_types = [action.action_type for action in plan.actions]
+
+        self.assertEqual(len(plan.actions), 2)
+        self.assertIn("read_changed_file", action_types)
+        self.assertEqual(action_types.count("find_related_test"), 1)
 
 
 if __name__ == "__main__":

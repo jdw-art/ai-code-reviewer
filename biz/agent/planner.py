@@ -14,10 +14,11 @@ class InvestigationPlanner:
         )
 
     def create_plan(self, task: ReviewTask, analysis: DiffAnalysis) -> InvestigationPlan:
-        actions: list[InvestigationAction] = []
+        changed_file_actions: list[InvestigationAction] = []
+        test_actions: list[InvestigationAction] = []
         for changed_file in analysis.files:
             priority = 10 if changed_file.risk_tags else 20
-            actions.append(
+            changed_file_actions.append(
                 InvestigationAction(
                     action_type="read_changed_file",
                     path=changed_file.path,
@@ -28,7 +29,7 @@ class InvestigationPlanner:
             )
             if not changed_file.is_test:
                 for candidate in self._test_candidates(changed_file.path)[: self.budget.max_test_files]:
-                    actions.append(
+                    test_actions.append(
                         InvestigationAction(
                             action_type="find_related_test",
                             path=candidate,
@@ -38,8 +39,21 @@ class InvestigationPlanner:
                         )
                     )
 
-        actions.sort(key=lambda item: (item.priority, item.path))
-        return InvestigationPlan(actions=actions[: self.budget.max_context_files], budget=self.budget)
+        changed_file_actions.sort(key=lambda item: (item.priority, item.path))
+        test_actions.sort(key=lambda item: (item.priority, item.path))
+
+        selected_actions = changed_file_actions[: self.budget.max_context_files]
+        if (
+            test_actions
+            and self.budget.max_context_files > 1
+            and len(changed_file_actions) >= self.budget.max_context_files
+        ):
+            selected_actions = selected_actions[: self.budget.max_context_files - 1] + test_actions[:1]
+        else:
+            remaining_slots = self.budget.max_context_files - len(selected_actions)
+            selected_actions.extend(test_actions[:remaining_slots])
+
+        return InvestigationPlan(actions=selected_actions, budget=self.budget)
 
     def _test_candidates(self, path: str) -> list[str]:
         directory, filename = os.path.split(path)
