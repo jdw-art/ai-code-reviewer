@@ -56,6 +56,9 @@ class ContextCollector:
                 truncated = True
                 warnings.append(f"Truncated {action.path} to fit max_context_tokens={plan.budget.max_context_tokens}")
                 content_tokens = count_tokens(content)
+                while content and content_tokens > remaining_tokens:
+                    content = content[:-1]
+                    content_tokens = count_tokens(content)
 
             total_tokens += content_tokens
 

@@ -127,6 +127,39 @@ class TestContextCollector(TestCase):
         self.assertIn("Truncated tests/test_app.py to fit max_context_tokens=3", warnings)
         self.assertIn("Truncated src/lib.py to fit max_context_tokens=3", warnings)
 
+    def test_defensively_trims_when_token_truncation_still_exceeds_budget(self):
+        plan = InvestigationPlan(
+            actions=[
+                InvestigationAction("read_changed_file", "src/app.py", "abc123", "changed file", 10),
+                InvestigationAction("find_related_test", "tests/test_app.py", "abc123", "related test", 40),
+            ],
+            budget=ContextBudget(max_context_files=5, max_file_chars=100, max_context_tokens=5),
+        )
+
+        def fake_count_tokens(text):
+            if text == "abc":
+                return 3
+            if text == "mixed":
+                return 8
+            return len(text)
+
+        def fake_truncate_text_by_tokens(text, max_tokens):
+            return "mixed"
+
+        with patch("biz.agent.context_collector.count_tokens", side_effect=fake_count_tokens), patch(
+            "biz.agent.context_collector.truncate_text_by_tokens",
+            side_effect=fake_truncate_text_by_tokens,
+        ):
+            contexts, warnings = ContextCollector().collect(
+                plan,
+                FakeReader({"src/app.py": "abc", "tests/test_app.py": "0123456789"}),
+            )
+
+        self.assertEqual(contexts[0].content, "abc")
+        self.assertEqual(contexts[1].content, "mi")
+        self.assertTrue(contexts[1].truncated)
+        self.assertIn("Truncated tests/test_app.py to fit max_context_tokens=5", warnings)
+
 
 if __name__ == "__main__":
     main()
