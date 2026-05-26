@@ -43,9 +43,10 @@ class BaseReviewer(abc.ABC):
 
     def call_llm(self, messages: List[Dict[str, Any]]) -> str:
         """调用 LLM 进行代码审核"""
-        logger.info(f"向 AI 发送代码 Review 请求, messages: {messages}")
+        total_tokens = sum(count_tokens(str(message.get("content", ""))) for message in messages)
+        logger.info("向 AI 发送代码 Review 请求, message_count=%s, approx_tokens=%s", len(messages), total_tokens)
         review_result = self.client.completions(messages=messages)
-        logger.info(f"收到 AI 返回结果: {review_result}")
+        logger.info("收到 AI 返回结果, response_length=%s", len(review_result or ""))
         return review_result
 
     @abc.abstractmethod
@@ -114,6 +115,11 @@ class AgentCodeReviewer(BaseReviewer):
         super().__init__("agent_code_review_prompt")
 
     def review_evidence(self, evidence_text: str) -> str:
+        review_max_tokens = int(os.getenv("REVIEW_MAX_TOKENS", 10000))
+        tokens_count = count_tokens(evidence_text)
+        if tokens_count > review_max_tokens:
+            evidence_text = truncate_text_by_tokens(evidence_text, review_max_tokens)
+
         review_result = self.review_code(evidence_text).strip()
         if review_result.startswith("```markdown") and review_result.endswith("```"):
             return review_result[11:-3].strip()

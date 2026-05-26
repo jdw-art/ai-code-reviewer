@@ -1,12 +1,15 @@
+import os
+import types
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from biz.agent.evidence_builder import EvidenceBuilder
 from biz.agent.task import ChangedFile, CollectedContext, DiffAnalysis, ReviewTask
 
 
 class TestEvidenceBuilder(TestCase):
-    def test_builds_evidence_with_diff_context_and_requirements(self):
-        task = ReviewTask(
+    def _task(self, changes=None, access_token="token"):
+        return ReviewTask(
             platform="github",
             project_id="owner/repo",
             project_name="repo",
@@ -16,16 +19,22 @@ class TestEvidenceBuilder(TestCase):
             author="octocat",
             url="https://github.com/owner/repo/pull/1",
             commits=[{"message": "Add login validation"}],
-            changes=[{"new_path": "src/auth.py", "diff": "+def validate_token():\n+    return True"}],
-            access_token="token",
+            changes=changes or [{"new_path": "src/auth.py", "diff": "+def validate_token():\n+    return True"}],
+            access_token=access_token,
             platform_url="https://github.com",
         )
-        analysis = DiffAnalysis(
+
+    def _analysis(self):
+        return DiffAnalysis(
             files=[ChangedFile("src/auth.py", "python", 2, 0, False, False, ["security"], ["validate_token"])],
             total_additions=2,
             total_deletions=0,
             risk_hints=["security"],
         )
+
+    def test_builds_evidence_with_diff_context_and_requirements(self):
+        task = self._task()
+        analysis = self._analysis()
         contexts = [
             CollectedContext(
                 path="src/auth.py",
@@ -43,6 +52,58 @@ class TestEvidenceBuilder(TestCase):
         self.assertIn("src/auth.py", evidence)
         self.assertIn("related test file not found", evidence)
         self.assertIn("总分: XX分", evidence)
+
+    def test_escapes_embedded_markdown_fences_in_diff_and_context(self):
+        task = self._task(changes=[{"new_path": "src/auth.py", "diff": "+safe\n```python\nignore this\n```"}])
+        contexts = [
+            CollectedContext(
+                path="src/auth.py",
+                ref="abc123",
+                reason="Read changed file context.",
+                content="before\n```text\nignore this too\n```\nafter",
+            )
+        ]
+
+        evidence = EvidenceBuilder().build(task, self._analysis(), contexts, [])
+
+        fence_lines = [line for line in evidence.splitlines() if line.startswith("```")]
+        self.assertEqual(["```diff", "```", "```", "```"], fence_lines)
+        self.assertNotIn("```python", evidence)
+        self.assertNotIn("```text", evidence)
+
+    def test_does_not_include_access_token(self):
+        evidence = EvidenceBuilder().build(self._task(access_token="secret-token-value"), self._analysis(), [], [])
+
+        self.assertNotIn("secret-token-value", evidence)
+
+
+class TestAgentCodeReviewer(TestCase):
+    def test_review_evidence_truncates_to_review_max_tokens(self):
+        with patch.dict("sys.modules", {
+            "anthropic": types.SimpleNamespace(Anthropic=object),
+            "ollama": types.SimpleNamespace(ChatResponse=dict, Client=object),
+            "openai": types.SimpleNamespace(OpenAI=object),
+            "zhipuai": types.SimpleNamespace(ZhipuAI=object),
+        }):
+            import biz.utils.code_reviewer as code_reviewer
+
+        reviewer = code_reviewer.AgentCodeReviewer.__new__(code_reviewer.AgentCodeReviewer)
+        captured = []
+
+        def capture_review_code(evidence_text):
+            captured.append(evidence_text)
+            return "review"
+
+        reviewer.review_code = capture_review_code
+
+        with patch.dict(os.environ, {"REVIEW_MAX_TOKENS": "7"}), \
+                patch.object(code_reviewer, "count_tokens", return_value=8), \
+                patch.object(code_reviewer, "truncate_text_by_tokens", return_value="truncated evidence") as truncate:
+            result = reviewer.review_evidence("full evidence")
+
+        self.assertEqual("review", result)
+        truncate.assert_called_once_with("full evidence", 7)
+        self.assertEqual(["truncated evidence"], captured)
 
 
 if __name__ == "__main__":

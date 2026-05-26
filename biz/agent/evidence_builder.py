@@ -1,6 +1,10 @@
 from biz.agent.task import CollectedContext, DiffAnalysis, ReviewTask
 
 
+def _sanitize_fenced_content(content: str) -> str:
+    return content.replace("```", "` ` `")
+
+
 class EvidenceBuilder:
     def build(
         self,
@@ -73,7 +77,7 @@ class EvidenceBuilder:
         for change in changes:
             lines.append(f"## {change.get('new_path') or change.get('old_path')}")
             lines.append("```diff")
-            lines.append(change.get("diff", ""))
+            lines.append(_sanitize_fenced_content(change.get("diff", "")))
             lines.append("```")
         return "\n".join(lines)
 
@@ -90,7 +94,7 @@ class EvidenceBuilder:
                 f"- Truncated: {context.truncated}",
                 f"- Error: {context.error or 'none'}",
                 "```",
-                context.content,
+                _sanitize_fenced_content(context.content),
                 "```",
             ])
         return "\n".join(lines)
