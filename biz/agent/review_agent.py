@@ -7,6 +7,7 @@ from biz.agent.evidence_builder import EvidenceBuilder
 from biz.agent.planner import InvestigationPlanner
 from biz.agent.task import AgentReviewResult, ReviewTask
 from biz.agent.tools.file_reader import PlatformFileReader
+from biz.utils.code_reviewer import CodeReviewer
 
 
 class EvidenceReviewer(Protocol):
@@ -37,7 +38,7 @@ class ReviewAgent:
         contexts, warnings = self.collector.collect(plan, self.file_reader)
         evidence = self.evidence_builder.build(task, analysis, contexts, warnings)
         review_text = self.reviewer.review_evidence(evidence)
-        score = self._parse_review_score(review_text)
+        score = CodeReviewer.parse_review_score(review_text)
         risk_level = self._parse_risk_level(review_text)
         changed_paths = {file.path for file in analysis.files}
         successful_contexts = [context for context in contexts if context.error is None]
@@ -69,12 +70,6 @@ class ReviewAgent:
         from biz.utils.code_reviewer import AgentCodeReviewer
 
         return AgentCodeReviewer()
-
-    def _parse_review_score(self, review_text: str) -> int:
-        if not review_text:
-            return 0
-        match = re.search(r"总分[:：]\s*(\d+)分?", review_text)
-        return int(match.group(1)) if match else 0
 
     def _parse_risk_level(self, review_text: str) -> str:
         match = re.search(r"risk level[:：]\s*(low|medium|high)", review_text, flags=re.IGNORECASE)

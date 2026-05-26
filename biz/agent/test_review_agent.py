@@ -1,5 +1,7 @@
 from unittest import TestCase, main
+from unittest.mock import patch
 
+from biz.utils import code_reviewer
 from biz.agent.review_agent import ReviewAgent
 from biz.agent.task import FileReadResult, ReviewTask
 
@@ -51,6 +53,15 @@ class TestReviewAgent(TestCase):
         self.assertEqual(result.investigated_files, ["src/auth.py"])
         self.assertEqual(result.agent_trace["mode"], "context_investigation")
         self.assertIn("src/auth.py", reviewer.evidence)
+
+    def test_uses_shared_review_score_parser(self):
+        reviewer = FakeReviewer("## Review\nRisk level: low\nscore from unusual format")
+
+        with patch.object(code_reviewer.CodeReviewer, "parse_review_score", return_value=77) as parse_score:
+            result = ReviewAgent(file_reader=FakeReader(), reviewer=reviewer).review(self._task())
+
+        parse_score.assert_called_once_with(reviewer.text)
+        self.assertEqual(result.score, 77)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,6 @@
 import os
 
 from biz.llm.client.base import BaseClient
-from biz.llm.client.anthropic import AnthropicClient
-from biz.llm.client.deepseek import DeepSeekClient
-from biz.llm.client.ollama_client import OllamaClient
-from biz.llm.client.openai import OpenAIClient
-from biz.llm.client.qwen import QwenClient
-from biz.llm.client.zhipuai import ZhipuAIClient
-from biz.utils.log import logger
 
 
 class Factory:
@@ -15,12 +8,12 @@ class Factory:
     def getClient(provider: str = None) -> BaseClient:
         provider = provider or os.getenv("LLM_PROVIDER", "anthropic")
         chat_model_providers = {
-            'anthropic': lambda: AnthropicClient(),
-            'zhipuai': lambda: ZhipuAIClient(),
-            'openai': lambda: OpenAIClient(),
-            'deepseek': lambda: DeepSeekClient(),
-            'qwen': lambda: QwenClient(),
-            'ollama': lambda: OllamaClient()
+            'anthropic': lambda: __import__("biz.llm.client.anthropic", fromlist=["AnthropicClient"]).AnthropicClient(),
+            'zhipuai': lambda: __import__("biz.llm.client.zhipuai", fromlist=["ZhipuAIClient"]).ZhipuAIClient(),
+            'openai': lambda: __import__("biz.llm.client.openai", fromlist=["OpenAIClient"]).OpenAIClient(),
+            'deepseek': lambda: __import__("biz.llm.client.deepseek", fromlist=["DeepSeekClient"]).DeepSeekClient(),
+            'qwen': lambda: __import__("biz.llm.client.qwen", fromlist=["QwenClient"]).QwenClient(),
+            'ollama': lambda: __import__("biz.llm.client.ollama_client", fromlist=["OllamaClient"]).OllamaClient()
         }
 
         provider_func = chat_model_providers.get(provider)
