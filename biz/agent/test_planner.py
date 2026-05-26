@@ -95,6 +95,24 @@ class TestInvestigationPlanner(TestCase):
         self.assertIn(("find_related_test", "tests/test_z_risky.py"), action_pairs)
         self.assertNotIn(("find_related_test", "tests/test_a_low.py"), action_pairs)
 
+    def test_reserved_related_test_uses_retained_source_when_first_retained_file_is_test(self):
+        analysis = DiffAnalysis(
+            files=[
+                ChangedFile("a_test.py", "python", 1, 0, True, False, risk_tags=["security"]),
+                ChangedFile("z.py", "python", 1, 0, False, False, risk_tags=["security"]),
+                ChangedFile("b.py", "python", 1, 0, False, False),
+            ],
+            total_additions=3,
+            total_deletions=0,
+        )
+
+        plan = InvestigationPlanner(ContextBudget(max_context_files=2)).create_plan(self._task(), analysis)
+        action_pairs = [(action.action_type, action.path) for action in plan.actions]
+
+        self.assertIn(("read_changed_file", "z.py"), action_pairs)
+        self.assertIn(("find_related_test", "tests/test_z.py"), action_pairs)
+        self.assertNotEqual([action.action_type for action in plan.actions], ["read_changed_file", "read_changed_file"])
+
 
 if __name__ == "__main__":
     main()

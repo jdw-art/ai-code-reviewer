@@ -47,10 +47,17 @@ class InvestigationPlanner:
             and self.budget.max_context_files > 1
             and len(changed_file_actions) >= self.budget.max_context_files
         ):
-            retained_changed_file_actions = selected_actions[: self.budget.max_context_files - 1]
-            reserved_test_action = self._first_test_action_for_changed_files(retained_changed_file_actions, test_actions_by_path)
-            if reserved_test_action:
-                selected_actions = retained_changed_file_actions + [reserved_test_action]
+            retained_changed_file_actions = selected_actions
+            reserved_changed_file_action, reserved_test_action = self._first_test_action_for_changed_files(
+                retained_changed_file_actions,
+                test_actions_by_path,
+            )
+            if reserved_changed_file_action and reserved_test_action:
+                retained_without_reserved = [
+                    action for action in retained_changed_file_actions if action.path != reserved_changed_file_action.path
+                ]
+                selected_actions = [reserved_changed_file_action] + retained_without_reserved[: self.budget.max_context_files - 2]
+                selected_actions.append(reserved_test_action)
         else:
             remaining_slots = self.budget.max_context_files - len(selected_actions)
             test_actions = [
@@ -66,12 +73,12 @@ class InvestigationPlanner:
         self,
         changed_file_actions: list[InvestigationAction],
         test_actions_by_path: dict[str, list[InvestigationAction]],
-    ) -> InvestigationAction | None:
+    ) -> tuple[InvestigationAction | None, InvestigationAction | None]:
         for changed_file_action in changed_file_actions:
             test_actions = test_actions_by_path.get(changed_file_action.path, [])
             if test_actions:
-                return test_actions[0]
-        return None
+                return changed_file_action, test_actions[0]
+        return None, None
 
     def _test_candidates(self, path: str) -> list[str]:
         directory, filename = os.path.split(path)
