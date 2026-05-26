@@ -48,6 +48,17 @@ class TestDiffAnalyzer(TestCase):
         self.assertIn("security", analysis.risk_hints)
         self.assertIn("config", analysis.risk_hints)
 
+    def test_marks_top_level_test_directories_as_test_files(self):
+        changes = [
+            {"new_path": "tests/helpers.py", "diff": "", "additions": 0, "deletions": 0},
+            {"new_path": "test/helpers.py", "diff": "", "additions": 0, "deletions": 0},
+        ]
+
+        analysis = DiffAnalyzer().analyze(changes)
+
+        self.assertTrue(analysis.files[0].is_test)
+        self.assertTrue(analysis.files[1].is_test)
+
 
 if __name__ == "__main__":
     main()

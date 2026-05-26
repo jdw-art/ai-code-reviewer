@@ -57,6 +57,8 @@ class DiffAnalyzer:
         return (
             "/test/" in normalized
             or "/tests/" in normalized
+            or normalized.startswith("test/")
+            or normalized.startswith("tests/")
             or "spec" in basename
             or basename.startswith("test_")
             or "_test" in basename
