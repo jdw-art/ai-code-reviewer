@@ -281,12 +281,7 @@ class DeepReviewService:
             return
         if DeepReviewService._has_message_foreign_key(conn):
             return
-        DeepReviewService._rebuild_table_with_constraints(
-            conn=conn,
-            table_name="project_deep_review_message",
-            create_sql=DeepReviewService._message_table_sql(),
-            column_names=["id", "session_id", "role", "content", "created_at"],
-        )
+        DeepReviewService._migrate_legacy_message_table(conn)
 
     @staticmethod
     def _ensure_run_table(conn: sqlite3.Connection):
@@ -295,22 +290,7 @@ class DeepReviewService:
             return
         if DeepReviewService._has_run_foreign_keys(conn):
             return
-        DeepReviewService._rebuild_table_with_constraints(
-            conn=conn,
-            table_name="project_deep_review_run",
-            create_sql=DeepReviewService._run_table_sql(),
-            column_names=[
-                "id",
-                "session_id",
-                "user_message_id",
-                "profile_name",
-                "round_count",
-                "stop_reason",
-                "result_markdown",
-                "trace_json",
-                "created_at",
-            ],
-        )
+        DeepReviewService._migrate_legacy_run_table(conn)
 
     @staticmethod
     def _ensure_indexes(conn: sqlite3.Connection):
@@ -395,21 +375,47 @@ class DeepReviewService:
         return has_session_fk and has_message_fk
 
     @staticmethod
-    def _rebuild_table_with_constraints(
-        conn: sqlite3.Connection,
-        table_name: str,
-        create_sql: str,
-        column_names: list[str],
-    ):
-        old_table_name = f"{table_name}_old"
-        column_list = ", ".join(column_names)
-        conn.execute(f"ALTER TABLE {table_name} RENAME TO {old_table_name}")
-        conn.execute(create_sql)
+    def _migrate_legacy_message_table(conn: sqlite3.Connection):
+        old_table_name = "project_deep_review_message_old"
+        conn.execute("ALTER TABLE project_deep_review_message RENAME TO project_deep_review_message_old")
+        conn.execute(DeepReviewService._message_table_sql())
         conn.execute(
             f"""
-            INSERT INTO {table_name} ({column_list})
-            SELECT {column_list}
-            FROM {old_table_name}
+            INSERT INTO project_deep_review_message (id, session_id, role, content, created_at)
+            SELECT legacy.id, legacy.session_id, legacy.role, legacy.content, legacy.created_at
+            FROM {old_table_name} AS legacy
+            INNER JOIN project_deep_review_session AS session
+                ON session.id = legacy.session_id
+            """
+        )
+        conn.execute(f"DROP TABLE {old_table_name}")
+
+    @staticmethod
+    def _migrate_legacy_run_table(conn: sqlite3.Connection):
+        old_table_name = "project_deep_review_run_old"
+        conn.execute("ALTER TABLE project_deep_review_run RENAME TO project_deep_review_run_old")
+        conn.execute(DeepReviewService._run_table_sql())
+        conn.execute(
+            f"""
+            INSERT INTO project_deep_review_run (
+                id, session_id, user_message_id, profile_name, round_count,
+                stop_reason, result_markdown, trace_json, created_at
+            )
+            SELECT legacy.id,
+                   legacy.session_id,
+                   legacy.user_message_id,
+                   legacy.profile_name,
+                   legacy.round_count,
+                   legacy.stop_reason,
+                   legacy.result_markdown,
+                   legacy.trace_json,
+                   legacy.created_at
+            FROM {old_table_name} AS legacy
+            INNER JOIN project_deep_review_session AS session
+                ON session.id = legacy.session_id
+            INNER JOIN project_deep_review_message AS message
+                ON message.id = legacy.user_message_id
+               AND message.session_id = legacy.session_id
             """
         )
         conn.execute(f"DROP TABLE {old_table_name}")
