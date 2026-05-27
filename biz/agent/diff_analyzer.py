@@ -5,6 +5,8 @@ from biz.agent.task import ChangedFile, DiffAnalysis
 
 
 class DiffAnalyzer:
+    """从平台 diff 中提取 Agent 规划阶段需要的文件画像。"""
+
     LANGUAGE_BY_EXTENSION = {
         ".py": "python",
         ".js": "javascript",
@@ -24,6 +26,7 @@ class DiffAnalyzer:
     INTERFACE_KEYWORDS = ("api", "router", "controller")
 
     def analyze(self, changes: list[dict]) -> DiffAnalysis:
+        """分析所有变更文件，并汇总跨文件风险标签。"""
         files = [self._analyze_change(change) for change in changes]
         risk_hints = sorted({tag for file in files for tag in file.risk_tags})
         return DiffAnalysis(
@@ -34,6 +37,7 @@ class DiffAnalyzer:
         )
 
     def _analyze_change(self, change: dict) -> ChangedFile:
+        """将单个变更项转换成稳定的 ChangedFile 结构。"""
         path = change.get("new_path") or change.get("old_path") or ""
         diff = change.get("diff", "")
         return ChangedFile(
@@ -48,10 +52,12 @@ class DiffAnalyzer:
         )
 
     def _detect_language(self, path: str) -> str:
+        """根据文件扩展名推断语言，未知类型不会阻塞审查。"""
         _, ext = os.path.splitext(path.lower())
         return self.LANGUAGE_BY_EXTENSION.get(ext, "unknown")
 
     def _is_test_path(self, path: str) -> bool:
+        """识别常见测试文件路径，用于避免给测试文件再猜测试。"""
         normalized = path.lower().replace("\\", "/")
         basename = os.path.basename(normalized)
         return (
@@ -65,6 +71,7 @@ class DiffAnalyzer:
         )
 
     def _is_config_path(self, path: str) -> bool:
+        """识别配置类文件，配置变更通常需要更保守的风险判断。"""
         normalized = path.lower()
         basename = os.path.basename(normalized)
         return (
@@ -75,6 +82,7 @@ class DiffAnalyzer:
         )
 
     def _risk_tags(self, path: str) -> list[str]:
+        """基于路径关键词打风险标签，为后续上下文读取排序提供信号。"""
         normalized = path.lower()
         tags = set()
         if any(keyword in normalized for keyword in self.SECURITY_KEYWORDS):
@@ -90,6 +98,7 @@ class DiffAnalyzer:
         return sorted(tags)
 
     def _changed_symbols(self, diff: str) -> list[str]:
+        """从新增行中提取常见语言的函数和类名，作为审查摘要线索。"""
         patterns = [
             r"^\+\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
             r"^\+\s*class\s+([A-Za-z_][A-Za-z0-9_]*)",

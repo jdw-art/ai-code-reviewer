@@ -284,6 +284,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
         agent_review_enabled = os.environ.get('AGENT_REVIEW_ENABLED', '0') == '1'
         if agent_review_enabled:
             try:
+                # ReviewTask 是 Agent 的平台无关输入，后续分析和规划都只依赖这个结构。
                 task = ReviewTask(
                     platform="github",
                     project_id=webhook_data['repository']['full_name'],
@@ -298,6 +299,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                     access_token=github_token,
                     platform_url=github_url,
                 )
+                # fork PR 的文件内容存在于 head 仓库；评论和 PR 元数据仍由 base 仓库 handler 处理。
                 head_repo_full_name = webhook_data['pull_request'].get('head', {}).get('repo', {}).get('full_name')
                 repo_full_name = head_repo_full_name or webhook_data['repository']['full_name']
                 file_reader = GitHubFileReader(
@@ -310,6 +312,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 score = agent_result.score
                 agent_trace = json.dumps(agent_result.agent_trace, ensure_ascii=False)
             except Exception as agent_error:
+                # Agent 是增强路径，失败时必须回退到旧审查器，避免 PR 完全没有反馈。
                 logger.error(f"GitHub Agent review failed, falling back to classic review: {agent_error}")
                 review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
                 score = CodeReviewer.parse_review_score(review_text=review_result)

@@ -109,8 +109,9 @@ class CodeReviewer(BaseReviewer):
 
 
 class AgentCodeReviewer(BaseReviewer):
-    """Investigation-style review based on structured evidence."""
+    """基于结构化证据的调查型审查器。"""
 
+    # 输出契约单独保留，避免 evidence 被截断时把“总分”等关键要求一起截掉。
     OUTPUT_REQUIREMENTS = """Return Markdown with these sections:
 1. Key issues
 2. Potential risks
@@ -124,6 +125,7 @@ Distinguish confirmed issues from potential risks. Mention when context is insuf
         super().__init__("agent_code_review_prompt")
 
     def review_evidence(self, evidence_text: str) -> str:
+        """在 token 预算内发送 evidence，并确保输出契约始终保留。"""
         review_max_tokens = int(os.getenv("REVIEW_MAX_TOKENS", 10000))
         requirements_tokens = count_tokens(self.OUTPUT_REQUIREMENTS)
         evidence_max_tokens = max(review_max_tokens - requirements_tokens, 1)
@@ -137,6 +139,7 @@ Distinguish confirmed issues from potential risks. Mention when context is insuf
         return review_result
 
     def review_code(self, evidence_text: str, output_requirements: str | None = None) -> str:
+        """组装最终消息；输出要求放在 evidence 外层以提高抗注入优先级。"""
         messages = [
             self.prompts["system_message"],
             {

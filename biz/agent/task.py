@@ -4,6 +4,8 @@ from typing import Any
 
 @dataclass
 class ReviewTask:
+    """一次代码审查任务的统一输入，屏蔽不同平台 webhook 字段差异。"""
+
     platform: str
     project_id: str
     project_name: str
@@ -19,11 +21,14 @@ class ReviewTask:
 
     @property
     def effective_ref(self) -> str:
+        """返回读取上下文时使用的 ref，优先使用 PR head commit。"""
         return self.change_ref or self.source_branch
 
 
 @dataclass
 class ChangedFile:
+    """单个变更文件的轻量分析结果。"""
+
     path: str
     language: str
     additions: int
@@ -36,6 +41,8 @@ class ChangedFile:
 
 @dataclass
 class DiffAnalysis:
+    """整次 PR diff 的汇总信息，供调查规划器决定读取范围。"""
+
     files: list[ChangedFile]
     total_additions: int
     total_deletions: int
@@ -44,6 +51,8 @@ class DiffAnalysis:
 
 @dataclass
 class ContextBudget:
+    """Agent 调查阶段的上下文预算，避免一次 PR 消耗过多 token 或 API 调用。"""
+
     max_context_files: int = 5
     max_context_tokens: int = 12000
     max_file_chars: int = 30000
@@ -53,6 +62,8 @@ class ContextBudget:
 
 @dataclass
 class InvestigationAction:
+    """一次上下文读取动作，例如读取变更文件或候选测试文件。"""
+
     action_type: str
     path: str
     ref: str
@@ -62,12 +73,16 @@ class InvestigationAction:
 
 @dataclass
 class InvestigationPlan:
+    """按优先级裁剪后的调查计划。"""
+
     actions: list[InvestigationAction]
     budget: ContextBudget
 
 
 @dataclass
 class FileReadResult:
+    """平台文件读取结果，错误和截断状态会进入 agent_trace。"""
+
     path: str
     ref: str
     content: str = ""
@@ -78,6 +93,8 @@ class FileReadResult:
 
 @dataclass
 class CollectedContext:
+    """已收集的文件上下文，包含读取原因和失败信息。"""
+
     path: str
     ref: str
     reason: str
@@ -88,6 +105,8 @@ class CollectedContext:
 
 @dataclass
 class AgentReviewResult:
+    """Agent 审查的最终结果，既用于评论回写，也用于持久化追踪。"""
+
     review_text: str
     score: int
     risk_level: str

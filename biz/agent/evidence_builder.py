@@ -4,14 +4,18 @@ from biz.agent.task import CollectedContext, DiffAnalysis, ReviewTask
 
 
 def _sanitize_fenced_content(content: str) -> str:
+    """打散证据中的 Markdown 代码围栏，避免破坏外层 prompt 结构。"""
     return content.replace("```", "` ` `")
 
 
 def _json_data(value: object) -> str:
+    """将不可信元数据编码成 JSON 字符串，降低 prompt 注入风险。"""
     return json.dumps("" if value is None else str(value), ensure_ascii=False)
 
 
 class EvidenceBuilder:
+    """把任务、diff、上下文和 warning 组装成 LLM 可审查的结构化证据。"""
+
     def build(
         self,
         task: ReviewTask,
@@ -19,6 +23,7 @@ class EvidenceBuilder:
         contexts: list[CollectedContext],
         warnings: list[str],
     ) -> str:
+        """生成完整 evidence 文本；这里的所有输入都按不可信数据处理。"""
         sections = [
             "# Task",
             "Review this GitHub pull request as an investigation-style code review Agent.",
@@ -60,10 +65,12 @@ class EvidenceBuilder:
         return "\n".join(sections)
 
     def _commit_messages(self, commits: list[dict]) -> str:
+        """整理提交信息，提交内容可能包含恶意指令，因此逐条 JSON 编码。"""
         messages = [commit.get("message", "").strip() for commit in commits if commit.get("message")]
         return "\n".join(f"- {_json_data(message)}" for message in messages) if messages else "- No commit messages provided."
 
     def _diff_summary(self, analysis: DiffAnalysis) -> str:
+        """输出 diff 汇总，帮助模型先建立文件级风险地图。"""
         lines = [
             f"- Total additions: {analysis.total_additions}",
             f"- Total deletions: {analysis.total_deletions}",
@@ -79,6 +86,7 @@ class EvidenceBuilder:
         return "\n".join(lines)
 
     def _code_diff(self, changes: list[dict]) -> str:
+        """输出原始 diff 片段，路径和 diff 内容都需要隔离为证据。"""
         lines = []
         for index, change in enumerate(changes, start=1):
             lines.append(f"## Changed File {index}")
@@ -89,6 +97,7 @@ class EvidenceBuilder:
         return "\n".join(lines)
 
     def _contexts(self, contexts: list[CollectedContext]) -> str:
+        """输出已读取的上下文文件，并保留读取失败和截断信息。"""
         if not contexts:
             return "- No context files were collected."
         lines = []
@@ -107,4 +116,5 @@ class EvidenceBuilder:
         return "\n".join(lines)
 
     def _warnings(self, warnings: list[str]) -> str:
+        """输出调查阶段的证据缺口，提醒模型不要在缺失上下文时编造事实。"""
         return "\n".join(f"- {_json_data(warning)}" for warning in warnings) if warnings else "- No investigation warnings."
