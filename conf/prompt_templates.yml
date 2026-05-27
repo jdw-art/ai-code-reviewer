@@ -50,6 +50,7 @@ baseline_review_prompt:
     {{ dimension_lines }}
     输出时必须严格使用这些中文标题：
     {{ section_lines }}
+    风险等级一节必须使用 low、medium、high 之一作为结论值。
     {{ total_score_formula }}
 
   user_prompt: |-
@@ -68,6 +69,7 @@ agent_code_review_prompt:
     {{ dimension_lines }}
     输出时必须严格使用这些中文标题：
     {{ section_lines }}
+    风险等级一节必须使用 low、medium、high 之一作为结论值。
     {{ total_score_formula }}
     输出时要明确区分“确定问题”和“潜在风险”，并说明你检查了哪些上下文。
     如果上下文不足，请直接说明不足，不要编造事实。

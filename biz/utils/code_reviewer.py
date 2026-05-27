@@ -23,9 +23,18 @@ class BaseReviewer(abc.ABC):
     ):
         self.client = Factory().getClient()
         resolved_profile = resolve_review_profile("baseline_review", repo_full_name)
-        selected_profile_name = review_profile or resolved_profile.profile_name
+        selected_profile_name = self._select_profile_name(review_profile, resolved_profile.profile_name)
         self.profile = get_review_profile("baseline_review", selected_profile_name)
+        self.review_profile_name = self.profile.profile_name
+        self.repo_full_name = repo_full_name
         self.prompts = self._load_prompts(prompt_key, os.getenv("REVIEW_STYLE", "professional"))
+
+    @staticmethod
+    def _select_profile_name(review_profile: str | None, resolved_profile_name: str) -> str:
+        """选择最终生效的 profile 名称。"""
+        if review_profile and review_profile != "default_review":
+            return review_profile
+        return resolved_profile_name
 
     def _load_prompts(self, prompt_key: str, style="professional") -> Dict[str, Any]:
         """加载提示词配置"""
@@ -82,8 +91,6 @@ class CodeReviewer(BaseReviewer):
     """代码 Diff 级别的审查"""
 
     def __init__(self, review_profile: str = "default_review", repo_full_name: str | None = None):
-        self.review_profile_name = review_profile
-        self.repo_full_name = repo_full_name
         super().__init__("baseline_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
 
     def review_and_strip_code(self, changes_text: str, commits_text: str = "") -> str:
@@ -135,8 +142,26 @@ class CodeReviewer(BaseReviewer):
     @staticmethod
     def parse_risk_level(review_text: str) -> str:
         """解析风险等级，缺失时使用 medium 兜底。"""
-        match = re.search(r"(?:风险等级|Risk level)[:：]?\s*(low|medium|high)", review_text, flags=re.IGNORECASE)
-        return match.group(1).lower() if match else "medium"
+        match = re.search(
+            r"(?:风险等级|Risk level)[:：]?\s*(low|medium|high|高风险|中风险|低风险|高|中|低)",
+            review_text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return "medium"
+        level = match.group(1).lower()
+        risk_level_map = {
+            "high": "high",
+            "高风险": "high",
+            "高": "high",
+            "medium": "medium",
+            "中风险": "medium",
+            "中": "medium",
+            "low": "low",
+            "低风险": "low",
+            "低": "low",
+        }
+        return risk_level_map.get(level, "medium")
 
 
 class AgentCodeReviewer(BaseReviewer):
@@ -155,13 +180,12 @@ class AgentCodeReviewer(BaseReviewer):
 
 评分要求：
 - 必须给出每个维度的得分和扣分依据
+- 风险等级只能填写 low、medium、high 之一
 - 总分 = 各维度得分直接求和
 - 总分格式必须为：总分: XX分
 """
 
     def __init__(self, review_profile: str = "default_review", repo_full_name: str | None = None):
-        self.review_profile_name = review_profile
-        self.repo_full_name = repo_full_name
         super().__init__("agent_code_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
 
     def _requirements_for_budget(self) -> str:

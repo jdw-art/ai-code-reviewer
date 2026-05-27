@@ -126,6 +126,14 @@ class TestReviewAgent(TestCase):
         parse_score.assert_called_once_with(reviewer.text)
         self.assertEqual(result.score, 77)
 
+    def test_maps_chinese_risk_level_to_english_code(self):
+        reviewer = FakeReviewer("## 审查报告\n风险等级：高\n总分: 91分")
+
+        result = ReviewAgent(file_reader=FakeReader(), reviewer=reviewer).review(self._task())
+
+        self.assertEqual(result.risk_level, "high")
+        self.assertEqual(result.agent_trace["risk_level"], "high")
+
 
 if __name__ == "__main__":
     main()
