@@ -22,7 +22,7 @@ class TestGithubAgentWorker(TestCase):
             "repository": {"name": "repo", "full_name": "owner/repo"},
             "pull_request": {
                 "number": 1,
-                "head": {"sha": "abc123", "ref": "feature"},
+                "head": {"sha": "abc123", "ref": "feature", "repo": {"full_name": "owner/repo"}},
                 "base": {"ref": "main"},
                 "user": {"login": "octocat"},
                 "html_url": "https://github.com/owner/repo/pull/1",
@@ -75,6 +75,40 @@ class TestGithubAgentWorker(TestCase):
         entity = event_manager["merge_request_reviewed"].send.call_args.args[0]
         self.assertEqual(entity.score, 88)
         self.assertIn("context_investigation", entity.agent_trace)
+
+    @patch("biz.queue.worker.event_manager")
+    @patch("biz.queue.worker.GitHubFileReader")
+    @patch("biz.queue.worker.ReviewAgent")
+    @patch("biz.queue.worker.GithubPullRequestHandler")
+    @patch("biz.queue.worker.ReviewService.check_mr_last_commit_id_exists", return_value=False)
+    def test_github_pr_agent_reads_context_from_fork_head_repo(
+        self,
+        _check_exists,
+        handler_cls,
+        agent_cls,
+        reader_cls,
+        event_manager,
+    ):
+        webhook_data = self._webhook_data()
+        webhook_data["pull_request"]["head"]["repo"] = {"full_name": "contributor/repo"}
+        handler = self._handler()
+        handler_cls.return_value = handler
+        agent_cls.return_value.review.return_value = AgentReviewResult(
+            review_text="Risk level: low\n总分: 90分",
+            score=90,
+            risk_level="low",
+            investigated_files=["src/app.py"],
+            investigation_summary="Checked src/app.py.",
+            warnings=[],
+            agent_trace={"mode": "context_investigation"},
+        )
+
+        from biz.queue.worker import handle_github_pull_request_event
+
+        handle_github_pull_request_event(webhook_data, "token", "https://github.com", "github_com")
+
+        reader_cls.assert_called_once()
+        self.assertEqual(reader_cls.call_args.kwargs["repo_full_name"], "contributor/repo")
 
     @patch("biz.queue.worker.event_manager")
     @patch("biz.queue.worker.CodeReviewer")

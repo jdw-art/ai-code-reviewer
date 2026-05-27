@@ -132,20 +132,47 @@ class TestAgentCodeReviewer(TestCase):
         reviewer = code_reviewer.AgentCodeReviewer.__new__(code_reviewer.AgentCodeReviewer)
         captured = []
 
-        def capture_review_code(evidence_text):
-            captured.append(evidence_text)
+        def capture_review_code(evidence_text, output_requirements=None):
+            captured.append((evidence_text, output_requirements))
             return "review"
 
         reviewer.review_code = capture_review_code
 
         with patch.dict(os.environ, {"REVIEW_MAX_TOKENS": "7"}), \
-                patch.object(code_reviewer, "count_tokens", return_value=8), \
+                patch.object(code_reviewer, "count_tokens", side_effect=lambda text: 2 if "Score in this exact" in text else 8), \
                 patch.object(code_reviewer, "truncate_text_by_tokens", return_value="truncated evidence") as truncate:
             result = reviewer.review_evidence("full evidence")
 
         self.assertEqual("review", result)
-        truncate.assert_called_once_with("full evidence", 7)
-        self.assertEqual(["truncated evidence"], captured)
+        truncate.assert_called_once_with("full evidence", 5)
+        self.assertEqual("truncated evidence", captured[0][0])
+        self.assertIn("总分: XX分", captured[0][1])
+
+    def test_review_code_places_output_requirements_outside_evidence_text(self):
+        with patch.dict("sys.modules", {
+            "anthropic": types.SimpleNamespace(Anthropic=object),
+            "ollama": types.SimpleNamespace(ChatResponse=dict, Client=object),
+            "openai": types.SimpleNamespace(OpenAI=object),
+            "zhipuai": types.SimpleNamespace(ZhipuAI=object),
+        }):
+            import biz.utils.code_reviewer as code_reviewer
+
+        reviewer = code_reviewer.AgentCodeReviewer.__new__(code_reviewer.AgentCodeReviewer)
+        reviewer.prompts = {
+            "system_message": {"role": "system", "content": "system"},
+            "user_message": {"role": "user", "content": "Evidence:\n{evidence_text}\nRequirements:\n{output_requirements}"},
+        }
+        captured = []
+
+        def capture_call_llm(messages):
+            captured.extend(messages)
+            return "review"
+
+        reviewer.call_llm = capture_call_llm
+
+        self.assertEqual("review", reviewer.review_code("truncated evidence", "总分: XX分"))
+        self.assertIn("truncated evidence", captured[1]["content"])
+        self.assertIn("总分: XX分", captured[1]["content"])
 
 
 if __name__ == "__main__":

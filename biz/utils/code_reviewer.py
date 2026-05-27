@@ -111,26 +111,40 @@ class CodeReviewer(BaseReviewer):
 class AgentCodeReviewer(BaseReviewer):
     """Investigation-style review based on structured evidence."""
 
+    OUTPUT_REQUIREMENTS = """Return Markdown with these sections:
+1. Key issues
+2. Potential risks
+3. Context investigation summary
+4. Recommendations
+5. Risk level: low, medium, or high
+6. Score in this exact parseable format: 总分: XX分
+Distinguish confirmed issues from potential risks. Mention when context is insufficient."""
+
     def __init__(self):
         super().__init__("agent_code_review_prompt")
 
     def review_evidence(self, evidence_text: str) -> str:
         review_max_tokens = int(os.getenv("REVIEW_MAX_TOKENS", 10000))
+        requirements_tokens = count_tokens(self.OUTPUT_REQUIREMENTS)
+        evidence_max_tokens = max(review_max_tokens - requirements_tokens, 1)
         tokens_count = count_tokens(evidence_text)
-        if tokens_count > review_max_tokens:
-            evidence_text = truncate_text_by_tokens(evidence_text, review_max_tokens)
+        if tokens_count > evidence_max_tokens:
+            evidence_text = truncate_text_by_tokens(evidence_text, evidence_max_tokens)
 
-        review_result = self.review_code(evidence_text).strip()
+        review_result = self.review_code(evidence_text, self.OUTPUT_REQUIREMENTS).strip()
         if review_result.startswith("```markdown") and review_result.endswith("```"):
             return review_result[11:-3].strip()
         return review_result
 
-    def review_code(self, evidence_text: str) -> str:
+    def review_code(self, evidence_text: str, output_requirements: str | None = None) -> str:
         messages = [
             self.prompts["system_message"],
             {
                 "role": "user",
-                "content": self.prompts["user_message"]["content"].format(evidence_text=evidence_text),
+                "content": self.prompts["user_message"]["content"].format(
+                    evidence_text=evidence_text,
+                    output_requirements=output_requirements or self.OUTPUT_REQUIREMENTS,
+                ),
             },
         ]
         return self.call_llm(messages)

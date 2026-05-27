@@ -298,8 +298,10 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                     access_token=github_token,
                     platform_url=github_url,
                 )
+                head_repo_full_name = webhook_data['pull_request'].get('head', {}).get('repo', {}).get('full_name')
+                repo_full_name = head_repo_full_name or webhook_data['repository']['full_name']
                 file_reader = GitHubFileReader(
-                    repo_full_name=webhook_data['repository']['full_name'],
+                    repo_full_name=repo_full_name,
                     token=github_token,
                     max_file_chars=int(os.environ.get('AGENT_MAX_FILE_CHARS', 30000)),
                 )
