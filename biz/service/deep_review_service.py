@@ -22,76 +22,14 @@ class DeepReviewService:
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
 
-            with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS project_deep_review_session (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        platform TEXT NOT NULL,
-                        project_id TEXT NOT NULL,
-                        project_name TEXT NOT NULL,
-                        profile_name TEXT NOT NULL,
-                        time_range_start INTEGER NOT NULL,
-                        time_range_end INTEGER NOT NULL,
-                        included_review_log_ids TEXT NOT NULL,
-                        baseline_snapshot TEXT NOT NULL,
-                        working_memory TEXT NOT NULL,
-                        session_summary TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        created_by TEXT NOT NULL,
-                        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-                        updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS project_deep_review_message (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id INTEGER NOT NULL,
-                        role TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS project_deep_review_run (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_id INTEGER NOT NULL,
-                        user_message_id INTEGER NOT NULL,
-                        profile_name TEXT NOT NULL,
-                        round_count INTEGER NOT NULL,
-                        stop_reason TEXT NOT NULL,
-                        result_markdown TEXT NOT NULL,
-                        trace_json TEXT NOT NULL,
-                        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_project_deep_review_session_project_id
-                    ON project_deep_review_session (project_id, created_at DESC)
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_project_deep_review_message_session_id
-                    ON project_deep_review_message (session_id, created_at DESC)
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_project_deep_review_run_session_id
-                    ON project_deep_review_run (session_id, created_at DESC)
-                    """
-                )
+            with closing(DeepReviewService._connect()) as conn:
+                DeepReviewService._ensure_session_table(conn)
+                DeepReviewService._ensure_message_table(conn)
+                DeepReviewService._ensure_run_table(conn)
+                DeepReviewService._ensure_indexes(conn)
                 conn.commit()
-        except sqlite3.DatabaseError as e:
-            print(f"Deep review database initialization failed: {e}")
+        except (OSError, sqlite3.DatabaseError) as e:
+            raise RuntimeError("Deep review database initialization failed") from e
 
     @staticmethod
     def create_session(
@@ -122,7 +60,7 @@ class DeepReviewService:
             session_summary=session_summary or {},
             status=status,
         )
-        with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
+        with closing(DeepReviewService._connect()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -153,7 +91,7 @@ class DeepReviewService:
 
     @staticmethod
     def list_sessions(project_id: str) -> list[dict[str, Any]]:
-        with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
+        with closing(DeepReviewService._connect()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -171,8 +109,9 @@ class DeepReviewService:
     @staticmethod
     def append_message(session_id: int, role: str, content: str) -> int:
         entity = ProjectDeepReviewMessageEntity(session_id=session_id, role=role, content=content)
-        with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
+        with closing(DeepReviewService._connect()) as conn:
             cursor = conn.cursor()
+            DeepReviewService._require_session_exists(conn=conn, session_id=session_id)
             cursor.execute(
                 """
                 INSERT INTO project_deep_review_message (session_id, role, content)
@@ -204,8 +143,14 @@ class DeepReviewService:
             result_markdown=result_markdown,
             trace_json=trace_json,
         )
-        with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
+        with closing(DeepReviewService._connect()) as conn:
             cursor = conn.cursor()
+            DeepReviewService._require_session_exists(conn=conn, session_id=session_id)
+            DeepReviewService._require_user_message_belongs_to_session(
+                conn=conn,
+                session_id=session_id,
+                user_message_id=user_message_id,
+            )
             cursor.execute(
                 """
                 INSERT INTO project_deep_review_run (
@@ -230,7 +175,7 @@ class DeepReviewService:
 
     @staticmethod
     def get_run(run_id: int) -> dict[str, Any] | None:
-        with closing(sqlite3.connect(DeepReviewService.DB_FILE)) as conn:
+        with closing(DeepReviewService._connect()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -298,6 +243,208 @@ class DeepReviewService:
             """,
             (session_id,),
         )
+
+    @staticmethod
+    def _connect() -> sqlite3.Connection:
+        conn = sqlite3.connect(DeepReviewService.DB_FILE)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+
+    @staticmethod
+    def _ensure_session_table(conn: sqlite3.Connection):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_deep_review_session (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                profile_name TEXT NOT NULL,
+                time_range_start INTEGER NOT NULL,
+                time_range_end INTEGER NOT NULL,
+                included_review_log_ids TEXT NOT NULL,
+                baseline_snapshot TEXT NOT NULL,
+                working_memory TEXT NOT NULL,
+                session_summary TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )
+            """
+        )
+
+    @staticmethod
+    def _ensure_message_table(conn: sqlite3.Connection):
+        if not DeepReviewService._table_exists(conn, "project_deep_review_message"):
+            conn.execute(DeepReviewService._message_table_sql())
+            return
+        if DeepReviewService._has_message_foreign_key(conn):
+            return
+        DeepReviewService._rebuild_table_with_constraints(
+            conn=conn,
+            table_name="project_deep_review_message",
+            create_sql=DeepReviewService._message_table_sql(),
+            column_names=["id", "session_id", "role", "content", "created_at"],
+        )
+
+    @staticmethod
+    def _ensure_run_table(conn: sqlite3.Connection):
+        if not DeepReviewService._table_exists(conn, "project_deep_review_run"):
+            conn.execute(DeepReviewService._run_table_sql())
+            return
+        if DeepReviewService._has_run_foreign_keys(conn):
+            return
+        DeepReviewService._rebuild_table_with_constraints(
+            conn=conn,
+            table_name="project_deep_review_run",
+            create_sql=DeepReviewService._run_table_sql(),
+            column_names=[
+                "id",
+                "session_id",
+                "user_message_id",
+                "profile_name",
+                "round_count",
+                "stop_reason",
+                "result_markdown",
+                "trace_json",
+                "created_at",
+            ],
+        )
+
+    @staticmethod
+    def _ensure_indexes(conn: sqlite3.Connection):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_project_deep_review_session_project_id
+            ON project_deep_review_session (project_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_project_deep_review_message_session_id
+            ON project_deep_review_message (session_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_project_deep_review_run_session_id
+            ON project_deep_review_run (session_id, created_at DESC)
+            """
+        )
+
+    @staticmethod
+    def _message_table_sql() -> str:
+        return """
+            CREATE TABLE project_deep_review_message (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (session_id) REFERENCES project_deep_review_session(id)
+            )
+        """
+
+    @staticmethod
+    def _run_table_sql() -> str:
+        return """
+            CREATE TABLE project_deep_review_run (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                user_message_id INTEGER NOT NULL,
+                profile_name TEXT NOT NULL,
+                round_count INTEGER NOT NULL,
+                stop_reason TEXT NOT NULL,
+                result_markdown TEXT NOT NULL,
+                trace_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (session_id) REFERENCES project_deep_review_session(id),
+                FOREIGN KEY (user_message_id) REFERENCES project_deep_review_message(id)
+            )
+        """
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?
+            """,
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _has_message_foreign_key(conn: sqlite3.Connection) -> bool:
+        rows = conn.execute("PRAGMA foreign_key_list(project_deep_review_message)").fetchall()
+        return any(row[2] == "project_deep_review_session" and row[3] == "session_id" and row[4] == "id" for row in rows)
+
+    @staticmethod
+    def _has_run_foreign_keys(conn: sqlite3.Connection) -> bool:
+        rows = conn.execute("PRAGMA foreign_key_list(project_deep_review_run)").fetchall()
+        has_session_fk = any(
+            row[2] == "project_deep_review_session" and row[3] == "session_id" and row[4] == "id"
+            for row in rows
+        )
+        has_message_fk = any(
+            row[2] == "project_deep_review_message" and row[3] == "user_message_id" and row[4] == "id"
+            for row in rows
+        )
+        return has_session_fk and has_message_fk
+
+    @staticmethod
+    def _rebuild_table_with_constraints(
+        conn: sqlite3.Connection,
+        table_name: str,
+        create_sql: str,
+        column_names: list[str],
+    ):
+        old_table_name = f"{table_name}_old"
+        column_list = ", ".join(column_names)
+        conn.execute(f"ALTER TABLE {table_name} RENAME TO {old_table_name}")
+        conn.execute(create_sql)
+        conn.execute(
+            f"""
+            INSERT INTO {table_name} ({column_list})
+            SELECT {column_list}
+            FROM {old_table_name}
+            """
+        )
+        conn.execute(f"DROP TABLE {old_table_name}")
+
+    @staticmethod
+    def _require_session_exists(conn: sqlite3.Connection, session_id: int):
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM project_deep_review_session
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"session_id={session_id} 不存在")
+
+    @staticmethod
+    def _require_user_message_belongs_to_session(
+        conn: sqlite3.Connection,
+        session_id: int,
+        user_message_id: int,
+    ):
+        row = conn.execute(
+            """
+            SELECT session_id
+            FROM project_deep_review_message
+            WHERE id = ?
+            """,
+            (user_message_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"user_message_id={user_message_id} 不存在")
+        if row[0] != session_id:
+            raise ValueError(f"user_message_id={user_message_id} 不属于 session_id={session_id}")
 
 
 DeepReviewService.init_db()
