@@ -115,6 +115,33 @@ class TestReviewServiceBaselineMetadata(TestCase):
         )
         self.assertIn("review_result", df.columns)
 
+    def test_insert_mr_review_log_keeps_missing_metadata_empty(self):
+        entity = self.MergeRequestReviewEntity(
+            project_name="repo",
+            author="octocat",
+            source_branch="feature",
+            target_branch="main",
+            updated_at=1,
+            commits=[{"message": "Add feature"}],
+            score=90,
+            url="https://github.com/owner/repo/pull/1",
+            review_result="## 已确认问题\n- 示例问题",
+            url_slug="github_com",
+            webhook_data={},
+            additions=1,
+            deletions=0,
+            last_commit_id="abc123",
+        )
+
+        self.ReviewService.insert_mr_review_log(entity)
+        df = self.ReviewService.get_mr_review_logs(include_review_metadata=True)
+
+        self.assertEqual(df.iloc[0]["platform"], "")
+        self.assertEqual(df.iloc[0]["project_id"], "")
+        self.assertEqual(df.iloc[0]["review_mode"], "")
+        self.assertEqual(df.iloc[0]["review_profile"], "")
+        self.assertEqual(df.iloc[0]["risk_level"], "")
+
     def test_get_mr_review_logs_keeps_empty_metadata_values(self):
         entity = self.MergeRequestReviewEntity(
             project_name="repo",
@@ -227,6 +254,56 @@ class TestReviewServiceBaselineMetadata(TestCase):
         self.assertEqual(row["review_mode"], "")
         self.assertEqual(row["review_profile"], "")
         self.assertEqual(row["risk_level"], "")
+
+    def test_init_db_clears_pseudo_default_metadata_even_with_commit_and_trace(self):
+        self._execute_sql([
+            "DROP TABLE IF EXISTS mr_review_log",
+            """
+            CREATE TABLE mr_review_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT DEFAULT 'github',
+                project_id TEXT DEFAULT '',
+                project_name TEXT,
+                author TEXT,
+                source_branch TEXT,
+                target_branch TEXT,
+                updated_at INTEGER,
+                commit_messages TEXT,
+                score INTEGER,
+                url TEXT,
+                review_result TEXT,
+                additions INTEGER DEFAULT 0,
+                deletions INTEGER DEFAULT 0,
+                last_commit_id TEXT DEFAULT '',
+                agent_trace TEXT DEFAULT '',
+                review_mode TEXT DEFAULT 'baseline_review',
+                review_profile TEXT DEFAULT 'default_review',
+                risk_level TEXT DEFAULT 'medium'
+            )
+            """,
+            """
+            INSERT INTO mr_review_log (
+                platform, project_id, project_name, author, source_branch, target_branch, updated_at,
+                commit_messages, score, url, review_result, additions, deletions, last_commit_id,
+                agent_trace, review_mode, review_profile, risk_level
+            ) VALUES (
+                'github', '', 'legacy-repo', 'octocat', 'feature', 'main', 1,
+                '["legacy commit"]', 80, 'https://example.com/mr/1', '历史评论', 0, 0, 'abc123',
+                '{"mode":"context_investigation"}', 'baseline_review', 'default_review', 'medium'
+            )
+            """,
+        ])
+
+        self.ReviewService.init_db()
+
+        row = self._fetch_mr_row()
+        self.assertEqual(row["platform"], "")
+        self.assertEqual(row["project_id"], "")
+        self.assertEqual(row["review_mode"], "")
+        self.assertEqual(row["review_profile"], "")
+        self.assertEqual(row["risk_level"], "")
+        self.assertEqual(row["last_commit_id"], "abc123")
+        self.assertEqual(row["agent_trace"], '{"mode":"context_investigation"}')
 
     def test_check_mr_last_commit_id_exists_scopes_by_platform_and_project_id(self):
         github_entity = self.MergeRequestReviewEntity(

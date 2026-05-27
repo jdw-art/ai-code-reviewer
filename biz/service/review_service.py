@@ -115,8 +115,6 @@ class ReviewService:
                         review_profile = '',
                         risk_level = ''
                     WHERE COALESCE(project_id, '') = ''
-                      AND COALESCE(last_commit_id, '') = ''
-                      AND COALESCE(agent_trace, '') = ''
                       AND COALESCE(platform, '') = 'github'
                       AND COALESCE(review_mode, '') = 'baseline_review'
                       AND COALESCE(review_profile, '') = 'default_review'
