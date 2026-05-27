@@ -71,6 +71,65 @@ class TestReviewServiceBaselineMetadata(TestCase):
         self.assertEqual(df.iloc[0]["review_profile"], "security_review")
         self.assertEqual(df.iloc[0]["risk_level"], "high")
 
+    def test_get_mr_review_logs_includes_dashboard_metadata_when_requested(self):
+        entity = self.MergeRequestReviewEntity(
+            project_name="repo",
+            project_id="owner/repo",
+            platform="github",
+            author="octocat",
+            source_branch="feature",
+            target_branch="main",
+            updated_at=1,
+            commits=[{"message": "Add feature"}],
+            score=90,
+            url="https://github.com/owner/repo/pull/1",
+            review_result="## 已确认问题\n- 示例问题",
+            url_slug="github_com",
+            webhook_data={},
+            additions=1,
+            deletions=0,
+            last_commit_id="abc123",
+        )
+
+        self.ReviewService.insert_mr_review_log(entity)
+        df = self.ReviewService.get_mr_review_logs(include_review_metadata=True)
+
+        self.assertEqual(
+            list(df.columns[:5]),
+            ["platform", "project_id", "review_mode", "review_profile", "risk_level"],
+        )
+        self.assertIn("review_result", df.columns)
+
+    def test_get_mr_review_logs_keeps_empty_metadata_values(self):
+        entity = self.MergeRequestReviewEntity(
+            project_name="repo",
+            project_id="owner/repo",
+            platform="github",
+            author="octocat",
+            source_branch="feature",
+            target_branch="main",
+            updated_at=1,
+            commits=[{"message": "Add feature"}],
+            score=90,
+            url="https://github.com/owner/repo/pull/1",
+            review_result="## 已确认问题\n- 示例问题",
+            url_slug="github_com",
+            webhook_data={},
+            additions=1,
+            deletions=0,
+            last_commit_id="abc123",
+            review_mode="",
+            review_profile=None,
+            risk_level="",
+        )
+
+        self.ReviewService.insert_mr_review_log(entity)
+        df = self.ReviewService.get_mr_review_logs(include_review_metadata=True)
+
+        self.assertEqual(df.iloc[0]["review_mode"], "")
+        self.assertTrue(df.iloc[0]["review_profile"] is None)
+        self.assertEqual(df.iloc[0]["risk_level"], "")
+
     def test_check_mr_last_commit_id_exists_scopes_by_platform_and_project_id(self):
         github_entity = self.MergeRequestReviewEntity(
             project_name="repo",
