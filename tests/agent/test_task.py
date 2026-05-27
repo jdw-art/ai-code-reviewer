@@ -100,6 +100,19 @@ class TestAgentTaskTypes(TestCase):
 
         self.assertEqual(result.agent_trace["mode"], "context_investigation")
 
+    def test_agent_review_result_defaults_to_baseline_review_profile(self):
+        result = AgentReviewResult(
+            review_text="总分: 90分",
+            score=90,
+            risk_level="medium",
+            investigated_files=["src/app.py"],
+            investigation_summary="Checked changed file context.",
+            warnings=[],
+        )
+
+        self.assertEqual(result.review_mode, "baseline_review")
+        self.assertEqual(result.review_profile, "default_review")
+
 
 if __name__ == "__main__":
     main()

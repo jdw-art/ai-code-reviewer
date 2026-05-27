@@ -1,7 +1,7 @@
 import os
 from unittest import TestCase, main
 
-from biz.agent.review_profile import resolve_review_profile
+from biz.agent.review_profile import get_review_profile, resolve_review_profile
 
 
 class TestReviewProfile(TestCase):
@@ -41,6 +41,12 @@ class TestReviewProfile(TestCase):
         os.environ["AGENT_REVIEW_PROFILE"] = "unknown_profile"
 
         profile = resolve_review_profile("baseline_review", "owner/repo")
+
+        self.assertEqual(profile.profile_name, "default_review")
+        self.assertEqual(profile.total_score_formula, "sum(dimensions)")
+
+    def test_get_review_profile_falls_back_to_default_review(self):
+        profile = get_review_profile("baseline_review", "unknown_profile")
 
         self.assertEqual(profile.profile_name, "default_review")
         self.assertEqual(profile.total_score_formula, "sum(dimensions)")
