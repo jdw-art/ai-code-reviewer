@@ -63,7 +63,7 @@ class TestMergeRequestWorkerMetadata(TestCase):
     @patch("biz.queue.worker.ReviewService.check_mr_last_commit_id_exists", return_value=False)
     def test_gitlab_mr_persists_non_github_metadata(
         self,
-        _check_exists,
+        check_exists,
         handler_cls,
         code_reviewer_cls,
         event_manager,
@@ -73,7 +73,7 @@ class TestMergeRequestWorkerMetadata(TestCase):
         handler_cls.return_value = handler
         code_reviewer_cls.return_value.review_and_strip_code.return_value = "Risk level: high\n总分: 82分"
         code_reviewer_cls.return_value.review_mode_name = "baseline_review"
-        code_reviewer_cls.return_value.review_profile_name = "default_review"
+        code_reviewer_cls.return_value.review_profile_name = "security_review"
         code_reviewer_cls.parse_review_score.return_value = 82
         code_reviewer_cls.parse_risk_level.return_value = "high"
 
@@ -81,12 +81,14 @@ class TestMergeRequestWorkerMetadata(TestCase):
 
         handle_merge_request_event(webhook_data, "token", "https://gitlab.example.com", "gitlab_example")
 
+        check_exists.assert_called_once_with("gitlab", "group/repo", "repo", "feature", "main", "abc123")
+        code_reviewer_cls.assert_called_once_with(repo_full_name="group/repo")
         event_manager["merge_request_reviewed"].send.assert_called_once()
         entity = event_manager["merge_request_reviewed"].send.call_args.args[0]
         self.assertEqual(entity.platform, "gitlab")
         self.assertEqual(entity.project_id, "group/repo")
         self.assertEqual(entity.review_mode, "baseline_review")
-        self.assertEqual(entity.review_profile, "default_review")
+        self.assertEqual(entity.review_profile, "security_review")
         self.assertEqual(entity.risk_level, "high")
 
     @patch("biz.queue.worker.event_manager")
@@ -95,7 +97,7 @@ class TestMergeRequestWorkerMetadata(TestCase):
     @patch("biz.queue.worker.ReviewService.check_mr_last_commit_id_exists", return_value=False)
     def test_gitea_mr_persists_non_github_metadata(
         self,
-        _check_exists,
+        check_exists,
         handler_cls,
         code_reviewer_cls,
         event_manager,
@@ -105,7 +107,7 @@ class TestMergeRequestWorkerMetadata(TestCase):
         handler_cls.return_value = handler
         code_reviewer_cls.return_value.review_and_strip_code.return_value = "Risk level: low\n总分: 78分"
         code_reviewer_cls.return_value.review_mode_name = "baseline_review"
-        code_reviewer_cls.return_value.review_profile_name = "default_review"
+        code_reviewer_cls.return_value.review_profile_name = "security_review"
         code_reviewer_cls.parse_review_score.return_value = 78
         code_reviewer_cls.parse_risk_level.return_value = "low"
 
@@ -113,12 +115,14 @@ class TestMergeRequestWorkerMetadata(TestCase):
 
         handle_gitea_pull_request_event(webhook_data, "token", "https://gitea.example.com", "gitea_example")
 
+        check_exists.assert_called_once_with("gitea", "owner/repo", "repo", "feature", "main", "abc123")
+        code_reviewer_cls.assert_called_once_with(repo_full_name="owner/repo")
         event_manager["merge_request_reviewed"].send.assert_called_once()
         entity = event_manager["merge_request_reviewed"].send.call_args.args[0]
         self.assertEqual(entity.platform, "gitea")
         self.assertEqual(entity.project_id, "owner/repo")
         self.assertEqual(entity.review_mode, "baseline_review")
-        self.assertEqual(entity.review_profile, "default_review")
+        self.assertEqual(entity.review_profile, "security_review")
         self.assertEqual(entity.risk_level, "low")
 
 

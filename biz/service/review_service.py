@@ -186,15 +186,17 @@ class ReviewService:
             return pd.DataFrame()
 
     @staticmethod
-    def check_mr_last_commit_id_exists(project_name: str, source_branch: str, target_branch: str, last_commit_id: str) -> bool:
+    def check_mr_last_commit_id_exists(platform: str, project_id: str, project_name: str, source_branch: str,
+                                       target_branch: str, last_commit_id: str) -> bool:
         """检查指定项目的Merge Request是否已经存在相同的last_commit_id"""
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT COUNT(*) FROM mr_review_log 
-                    WHERE project_name = ? AND source_branch = ? AND target_branch = ? AND last_commit_id = ?
-                ''', (project_name, source_branch, target_branch, last_commit_id))
+                    WHERE platform = ? AND project_id = ? AND project_name = ?
+                    AND source_branch = ? AND target_branch = ? AND last_commit_id = ?
+                ''', (platform, project_id, project_name, source_branch, target_branch, last_commit_id))
                 count = cursor.fetchone()[0]
                 return count > 0
         except sqlite3.DatabaseError as e:

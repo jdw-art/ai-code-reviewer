@@ -59,7 +59,7 @@ class TestGithubAgentWorker(TestCase):
     @patch("biz.queue.worker.ReviewService.check_mr_last_commit_id_exists", return_value=False)
     def test_github_pr_uses_agent_when_enabled(
         self,
-        _check_exists,
+        check_exists,
         handler_cls,
         agent_cls,
         reader_cls,
@@ -84,6 +84,7 @@ class TestGithubAgentWorker(TestCase):
 
         reader_cls.assert_called_once()
         agent_cls.return_value.review.assert_called_once()
+        check_exists.assert_called_once_with("github", "owner/repo", "repo", "feature", "main", "abc123")
         handler.add_pull_request_notes.assert_called_once()
         event_manager["merge_request_reviewed"].send.assert_called_once()
         entity = event_manager["merge_request_reviewed"].send.call_args.args[0]
