@@ -68,6 +68,25 @@ class TestAgentTaskTypes(TestCase):
 
         self.assertNotIn("super-secret-token", repr(task))
 
+    def test_review_task_defaults_to_baseline_review_mode(self):
+        task = ReviewTask(
+            platform="github",
+            project_id="owner/repo",
+            project_name="repo",
+            source_branch="feature/login",
+            target_branch="main",
+            change_ref="abc123",
+            author="octocat",
+            url="https://github.com/owner/repo/pull/1",
+            commits=[],
+            changes=[],
+            access_token="token",
+            platform_url="https://github.com",
+        )
+
+        self.assertEqual(task.review_mode, "baseline_review")
+        self.assertEqual(task.review_profile, "default_review")
+
     def test_agent_trace_is_serializable_shape(self):
         result = AgentReviewResult(
             review_text="总分: 90分",

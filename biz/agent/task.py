@@ -18,6 +18,8 @@ class ReviewTask:
     changes: list[dict[str, Any]]
     access_token: str = field(repr=False)
     platform_url: str
+    review_mode: str = "baseline_review"
+    review_profile: str = "default_review"
 
     @property
     def effective_ref(self) -> str:
@@ -113,4 +115,6 @@ class AgentReviewResult:
     investigated_files: list[str]
     investigation_summary: str
     warnings: list[str]
+    review_mode: str = "baseline_review"
+    review_profile: str = "default_review"
     agent_trace: dict[str, Any] = field(default_factory=dict)
