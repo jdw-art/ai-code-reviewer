@@ -19,6 +19,8 @@ class ReviewService:
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS mr_review_log (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            platform TEXT DEFAULT 'github',
+                            project_id TEXT DEFAULT '',
                             project_name TEXT,
                             author TEXT,
                             source_branch TEXT,
@@ -31,7 +33,10 @@ class ReviewService:
                             additions INTEGER DEFAULT 0,
                             deletions INTEGER DEFAULT 0,
                             last_commit_id TEXT DEFAULT '',
-                            agent_trace TEXT DEFAULT ''
+                            agent_trace TEXT DEFAULT '',
+                            review_mode TEXT DEFAULT 'baseline_review',
+                            review_profile TEXT DEFAULT 'default_review',
+                            risk_level TEXT DEFAULT 'medium'
                         )
                     ''')
                 cursor.execute('''
@@ -61,6 +66,16 @@ class ReviewService:
                 # 为旧版本的mr_review_log表添加last_commit_id字段
                 mr_columns = [
                     {
+                        "name": "platform",
+                        "type": "TEXT",
+                        "default": "'github'"
+                    },
+                    {
+                        "name": "project_id",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
                         "name": "last_commit_id",
                         "type": "TEXT",
                         "default": "''"
@@ -69,6 +84,21 @@ class ReviewService:
                         "name": "agent_trace",
                         "type": "TEXT",
                         "default": "''"
+                    },
+                    {
+                        "name": "review_mode",
+                        "type": "TEXT",
+                        "default": "'baseline_review'"
+                    },
+                    {
+                        "name": "review_profile",
+                        "type": "TEXT",
+                        "default": "'default_review'"
+                    },
+                    {
+                        "name": "risk_level",
+                        "type": "TEXT",
+                        "default": "'medium'"
                     }
                 ]
                 cursor.execute(f"PRAGMA table_info('mr_review_log')")
@@ -93,22 +123,26 @@ class ReviewService:
             with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                                INSERT INTO mr_review_log (project_name,author, source_branch, target_branch, 
-                                updated_at, commit_messages, score, url,review_result, additions, deletions, 
-                                last_commit_id, agent_trace)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO mr_review_log (platform, project_id, project_name, author,
+                                source_branch, target_branch, updated_at, commit_messages, score, url,
+                                review_result, additions, deletions, last_commit_id, agent_trace,
+                                review_mode, review_profile, risk_level)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''',
-                               (entity.project_name, entity.author, entity.source_branch,
-                                entity.target_branch, entity.updated_at, entity.commit_messages, entity.score,
-                                entity.url, entity.review_result, entity.additions, entity.deletions,
-                                entity.last_commit_id, entity.agent_trace))
+                               (entity.platform, entity.project_id, entity.project_name, entity.author,
+                                entity.source_branch, entity.target_branch, entity.updated_at,
+                                entity.commit_messages, entity.score, entity.url, entity.review_result,
+                                entity.additions, entity.deletions, entity.last_commit_id,
+                                entity.agent_trace, entity.review_mode, entity.review_profile,
+                                entity.risk_level))
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"Error inserting review log: {e}")
 
     @staticmethod
     def get_mr_review_logs(authors: list = None, project_names: list = None, updated_at_gte: int = None,
-                           updated_at_lte: int = None, include_agent_trace: bool = False) -> pd.DataFrame:
+                           updated_at_lte: int = None, include_agent_trace: bool = False,
+                           include_review_metadata: bool = False) -> pd.DataFrame:
         """获取符合条件的合并请求审核日志"""
         try:
             with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
@@ -116,6 +150,8 @@ class ReviewService:
                     "project_name, author, source_branch, target_branch, updated_at, commit_messages, score, url, "
                     "review_result, additions, deletions"
                 )
+                if include_review_metadata:
+                    columns = "platform, project_id, review_mode, review_profile, risk_level, " + columns
                 if include_agent_trace:
                     columns += ", agent_trace"
                 query = """

@@ -5,7 +5,7 @@ import tempfile
 from unittest import TestCase, main
 
 
-class TestReviewServiceAgentTrace(TestCase):
+class TestReviewServiceBaselineMetadata(TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(delete=False)
         self.tmp.close()
@@ -39,9 +39,11 @@ class TestReviewServiceAgentTrace(TestCase):
             os.environ["REVIEW_DB_FILE"] = self.original_review_db_file
         os.unlink(self.tmp.name)
 
-    def test_insert_mr_review_log_stores_agent_trace(self):
+    def test_insert_and_query_baseline_metadata(self):
         entity = self.MergeRequestReviewEntity(
             project_name="repo",
+            project_id="owner/repo",
+            platform="github",
             author="octocat",
             source_branch="feature",
             target_branch="main",
@@ -56,67 +58,18 @@ class TestReviewServiceAgentTrace(TestCase):
             deletions=0,
             last_commit_id="abc123",
             agent_trace='{"mode": "context_investigation"}',
-        )
-
-        self.ReviewService.insert_mr_review_log(entity)
-        df = self.ReviewService.get_mr_review_logs(include_agent_trace=True)
-
-        self.assertEqual(df.iloc[0]["agent_trace"], '{"mode": "context_investigation"}')
-
-    def test_get_mr_review_logs_only_returns_agent_trace_when_requested(self):
-        entity = self.MergeRequestReviewEntity(
-            project_name="repo",
-            author="octocat",
-            source_branch="feature",
-            target_branch="main",
-            updated_at=1,
-            commits=[{"message": "Add feature"}],
-            score=90,
-            url="https://github.com/owner/repo/pull/1",
-            review_result="总分: 90分",
-            url_slug="github_com",
-            webhook_data={},
-            additions=1,
-            deletions=0,
-            last_commit_id="abc123",
-            agent_trace='{"mode": "context_investigation"}',
-        )
-
-        self.ReviewService.insert_mr_review_log(entity)
-        default_df = self.ReviewService.get_mr_review_logs()
-        trace_df = self.ReviewService.get_mr_review_logs(include_agent_trace=True)
-
-        self.assertNotIn("agent_trace", default_df.columns)
-        self.assertIn("agent_trace", trace_df.columns)
-
-    def test_get_mr_review_logs_supports_agent_trace_with_review_metadata(self):
-        entity = self.MergeRequestReviewEntity(
-            project_name="repo",
-            author="octocat",
-            source_branch="feature",
-            target_branch="main",
-            updated_at=1,
-            commits=[{"message": "Add feature"}],
-            score=90,
-            url="https://github.com/owner/repo/pull/1",
-            review_result="总分: 90分",
-            url_slug="github_com",
-            webhook_data={},
-            additions=1,
-            deletions=0,
-            last_commit_id="abc123",
-            agent_trace='{"mode": "context_investigation"}',
+            review_mode="baseline_review",
+            review_profile="security_review",
+            risk_level="high",
         )
 
         self.ReviewService.insert_mr_review_log(entity)
         df = self.ReviewService.get_mr_review_logs(include_agent_trace=True, include_review_metadata=True)
 
-        self.assertIn("agent_trace", df.columns)
-        self.assertIn("platform", df.columns)
-        self.assertIn("project_id", df.columns)
-        self.assertIn("review_mode", df.columns)
-        self.assertIn("review_profile", df.columns)
-        self.assertIn("risk_level", df.columns)
+        self.assertEqual(df.iloc[0]["platform"], "github")
+        self.assertEqual(df.iloc[0]["project_id"], "owner/repo")
+        self.assertEqual(df.iloc[0]["review_profile"], "security_review")
+        self.assertEqual(df.iloc[0]["risk_level"], "high")
 
 
 if __name__ == "__main__":

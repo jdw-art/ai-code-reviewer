@@ -1,7 +1,9 @@
 class MergeRequestReviewEntity:
     def __init__(self, project_name: str, author: str, source_branch: str, target_branch: str, updated_at: int,
                  commits: list, score: float, url: str, review_result: str, url_slug: str, webhook_data: dict,
-                 additions: int, deletions: int, last_commit_id: str, agent_trace: str = ""):
+                 additions: int, deletions: int, last_commit_id: str, agent_trace: str = "",
+                 platform: str = "github", project_id: str = "", review_mode: str = "baseline_review",
+                 review_profile: str = "default_review", risk_level: str = "medium"):
         self.project_name = project_name
         self.author = author
         self.source_branch = source_branch
@@ -17,6 +19,11 @@ class MergeRequestReviewEntity:
         self.deletions = deletions
         self.last_commit_id = last_commit_id
         self.agent_trace = agent_trace
+        self.platform = platform
+        self.project_id = project_id
+        self.review_mode = review_mode
+        self.review_profile = review_profile
+        self.risk_level = risk_level
 
     @property
     def commit_messages(self):

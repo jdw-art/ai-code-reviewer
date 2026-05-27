@@ -4,6 +4,7 @@ import traceback
 from datetime import datetime
 
 from biz.agent.review_agent import ReviewAgent
+from biz.agent.review_profile import resolve_review_profile
 from biz.agent.task import ReviewTask
 from biz.agent.tools.file_reader import GitHubFileReader
 from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
@@ -279,8 +280,13 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
 
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
+        repo_full_name = webhook_data['repository']['full_name']
+        profile = resolve_review_profile("baseline_review", repo_full_name)
+        review_mode = profile.mode
+        review_profile_name = profile.profile_name
         agent_trace = ""
         score = 0
+        risk_level = "medium"
         agent_review_enabled = os.environ.get('AGENT_REVIEW_ENABLED', '0') == '1'
         if agent_review_enabled:
             try:
@@ -298,12 +304,14 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                     changes=changes,
                     access_token=github_token,
                     platform_url=github_url,
+                    review_mode=review_mode,
+                    review_profile=review_profile_name,
                 )
                 # fork PR 的文件内容存在于 head 仓库；评论和 PR 元数据仍由 base 仓库 handler 处理。
                 head_repo_full_name = webhook_data['pull_request'].get('head', {}).get('repo', {}).get('full_name')
-                repo_full_name = head_repo_full_name or webhook_data['repository']['full_name']
+                read_repo_full_name = head_repo_full_name or repo_full_name
                 file_reader = GitHubFileReader(
-                    repo_full_name=repo_full_name,
+                    repo_full_name=read_repo_full_name,
                     token=github_token,
                     max_file_chars=int(os.environ.get('AGENT_MAX_FILE_CHARS', 30000)),
                 )
@@ -311,14 +319,23 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 review_result = agent_result.review_text
                 score = agent_result.score
                 agent_trace = json.dumps(agent_result.agent_trace, ensure_ascii=False)
+                risk_level = agent_result.risk_level or CodeReviewer.parse_risk_level(review_result)
             except Exception as agent_error:
                 # Agent 是增强路径，失败时必须回退到旧审查器，避免 PR 完全没有反馈。
                 logger.error(f"GitHub Agent review failed, falling back to classic review: {agent_error}")
-                review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+                review_result = CodeReviewer(
+                    review_profile=review_profile_name,
+                    repo_full_name=repo_full_name,
+                ).review_and_strip_code(str(changes), commits_text)
                 score = CodeReviewer.parse_review_score(review_text=review_result)
+                risk_level = CodeReviewer.parse_risk_level(review_result)
         else:
-            review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+            review_result = CodeReviewer(
+                review_profile=review_profile_name,
+                repo_full_name=repo_full_name,
+            ).review_and_strip_code(str(changes), commits_text)
             score = CodeReviewer.parse_review_score(review_text=review_result)
+            risk_level = CodeReviewer.parse_risk_level(review_result)
 
         # 将review结果提交到GitHub的 notes
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
@@ -341,6 +358,11 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 deletions=deletions,
                 last_commit_id=github_last_commit_id,
                 agent_trace=agent_trace,
+                platform="github",
+                project_id=repo_full_name,
+                review_mode=review_mode,
+                review_profile=review_profile_name,
+                risk_level=risk_level,
             ))
 
     except Exception as e:
