@@ -93,6 +93,7 @@ class TestGithubAgentWorker(TestCase):
         self.assertEqual(entity.project_id, "owner/repo")
         self.assertEqual(entity.review_mode, "baseline_review")
         self.assertEqual(entity.review_profile, "default_review")
+        self.assertEqual(entity.risk_level, "low")
 
     @patch("biz.queue.worker.event_manager")
     @patch("biz.queue.worker.GitHubFileReader")

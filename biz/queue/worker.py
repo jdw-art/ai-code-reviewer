@@ -140,7 +140,14 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        reviewer = CodeReviewer()
+        review_result = reviewer.review_and_strip_code(str(changes), commits_text)
+        project_info = webhook_data.get('project', {})
+        gitlab_project_id = project_info.get('path_with_namespace')
+        if not gitlab_project_id:
+            raw_project_id = project_info.get('id') or object_attributes.get('target_project_id')
+            gitlab_project_id = str(raw_project_id) if raw_project_id is not None else ""
+        risk_level = CodeReviewer.parse_risk_level(review_result)
 
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
@@ -162,6 +169,11 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                platform="gitlab",
+                project_id=gitlab_project_id,
+                review_mode=reviewer.review_mode_name,
+                review_profile=reviewer.review_profile_name,
+                risk_level=risk_level,
             )
         )
 
@@ -473,12 +485,18 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
             return
 
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        reviewer = CodeReviewer()
+        review_result = reviewer.review_and_strip_code(str(changes), commits_text)
+        risk_level = CodeReviewer.parse_risk_level(review_result)
 
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
         repository = webhook_data.get('repository', {})
         author_info = pull_request.get('user', {}) or webhook_data.get('sender', {}) or {}
+        owner_info = repository.get('owner', {}) or {}
+        owner = owner_info.get('login') or owner_info.get('name') or owner_info.get('username')
+        repo_name = repository.get('name')
+        repo_full_name = repository.get('full_name') or (f"{owner}/{repo_name}" if owner and repo_name else "")
 
         event_manager['merge_request_reviewed'].send(
             MergeRequestReviewEntity(
@@ -496,6 +514,11 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                platform="gitea",
+                project_id=repo_full_name,
+                review_mode=reviewer.review_mode_name,
+                review_profile=reviewer.review_profile_name,
+                risk_level=risk_level,
             ))
 
     except Exception as e:
