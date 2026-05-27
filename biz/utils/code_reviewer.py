@@ -18,13 +18,14 @@ class BaseReviewer(abc.ABC):
     def __init__(
         self,
         prompt_key: str,
-        review_profile: str = "default_review",
+        review_profile: str | None = None,
         repo_full_name: str | None = None,
     ):
         self.client = Factory().getClient()
         resolved_profile = resolve_review_profile("baseline_review", repo_full_name)
         selected_profile_name = self._select_profile_name(review_profile, resolved_profile.profile_name)
         self.profile = get_review_profile("baseline_review", selected_profile_name)
+        self.review_mode_name = self.profile.mode
         self.review_profile_name = self.profile.profile_name
         self.repo_full_name = repo_full_name
         self.prompts = self._load_prompts(prompt_key, os.getenv("REVIEW_STYLE", "professional"))
@@ -32,7 +33,7 @@ class BaseReviewer(abc.ABC):
     @staticmethod
     def _select_profile_name(review_profile: str | None, resolved_profile_name: str) -> str:
         """选择最终生效的 profile 名称。"""
-        if review_profile and review_profile != "default_review":
+        if review_profile is not None:
             return review_profile
         return resolved_profile_name
 
@@ -90,7 +91,7 @@ class BaseReviewer(abc.ABC):
 class CodeReviewer(BaseReviewer):
     """代码 Diff 级别的审查"""
 
-    def __init__(self, review_profile: str = "default_review", repo_full_name: str | None = None):
+    def __init__(self, review_profile: str | None = None, repo_full_name: str | None = None):
         super().__init__("baseline_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
 
     def review_and_strip_code(self, changes_text: str, commits_text: str = "") -> str:
@@ -185,7 +186,7 @@ class AgentCodeReviewer(BaseReviewer):
 - 总分格式必须为：总分: XX分
 """
 
-    def __init__(self, review_profile: str = "default_review", repo_full_name: str | None = None):
+    def __init__(self, review_profile: str | None = None, repo_full_name: str | None = None):
         super().__init__("agent_code_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
 
     def _requirements_for_budget(self) -> str:

@@ -55,6 +55,7 @@ class ReviewAgent:
             review_text = reviewer.review_evidence(evidence)
             score = CodeReviewer.parse_review_score(review_text)
             risk_level = self._parse_risk_level(review_text)
+            review_mode = self._resolve_review_mode_name(reviewer, task.review_mode)
             review_profile = self._resolve_review_profile_name(reviewer, task.review_profile)
             # trace 只记录成功读取的文件元数据，不保存文件内容，避免落库过大或泄露上下文。
             successful_contexts = [context for context in contexts if context.error is None]
@@ -67,13 +68,13 @@ class ReviewAgent:
                 investigated_files=investigated_files,
                 investigation_summary=investigation_summary,
                 warnings=warnings,
-                review_mode=task.review_mode,
+                review_mode=review_mode,
                 review_profile=review_profile,
                 agent_trace={
                     "mode": "context_investigation",
                     "risk_level": risk_level,
                     "review_profile": review_profile,
-                    "review_mode": task.review_mode,
+                    "review_mode": review_mode,
                     "investigated_files": [
                         {"path": context.path, "reason": context.reason, "truncated": context.truncated}
                         for context in successful_contexts
@@ -105,6 +106,13 @@ class ReviewAgent:
             return profile.profile_name
         return getattr(reviewer, "review_profile_name", fallback_profile) or fallback_profile
 
+    def _resolve_review_mode_name(self, reviewer: object, fallback_mode: str) -> str:
+        """优先返回 reviewer 实际生效的 mode 名称。"""
+        profile = getattr(reviewer, "profile", None)
+        if profile is not None and getattr(profile, "mode", None):
+            return profile.mode
+        return getattr(reviewer, "review_mode_name", fallback_mode) or fallback_mode
+
     def _summary(self, investigated_files: list[str], warnings: list[str]) -> str:
         """生成简短调查摘要，用于结果对象和后续可观测信息。"""
         checked = ", ".join(investigated_files) if investigated_files else "no context files"
@@ -122,6 +130,7 @@ class ReviewAgent:
         review_text = reviewer.review_and_strip_code(str(task.changes), commits_text)
         score = CodeReviewer.parse_review_score(review_text)
         risk_level = self._parse_risk_level(review_text)
+        review_mode = self._resolve_review_mode_name(reviewer, task.review_mode)
         review_profile = self._resolve_review_profile_name(reviewer, task.review_profile)
         warnings = [f"Agent review failed, used classic fallback: {type(exc).__name__}"]
         return AgentReviewResult(
@@ -131,13 +140,13 @@ class ReviewAgent:
             investigated_files=[],
             investigation_summary=self._summary([], warnings),
             warnings=warnings,
-            review_mode=task.review_mode,
+            review_mode=review_mode,
             review_profile=review_profile,
             agent_trace={
                 "mode": "classic_fallback",
                 "risk_level": risk_level,
                 "review_profile": review_profile,
-                "review_mode": task.review_mode,
+                "review_mode": review_mode,
                 "investigated_files": [],
                 "warnings": warnings,
             },

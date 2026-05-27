@@ -1,3 +1,4 @@
+import types
 from unittest import TestCase, main
 from unittest.mock import patch
 
@@ -12,8 +13,9 @@ class FakeReader:
 
 
 class FakeReviewer:
-    def __init__(self, text):
+    def __init__(self, text, profile_name="default_review", mode="baseline_review"):
         self.text = text
+        self.profile = types.SimpleNamespace(profile_name=profile_name, mode=mode)
 
     def review_evidence(self, evidence):
         self.evidence = evidence
@@ -83,9 +85,11 @@ class TestReviewAgent(TestCase):
 
         self.assertEqual(result.score, 88)
         self.assertEqual(result.risk_level, "medium")
+        self.assertEqual(result.review_mode, "baseline_review")
         self.assertEqual(result.review_profile, "default_review")
         self.assertEqual(result.investigated_files, ["src/auth.py", "tests/test_auth.py", "src/test_auth.py"])
         self.assertEqual(result.agent_trace["mode"], "context_investigation")
+        self.assertEqual(result.agent_trace["review_mode"], "baseline_review")
         self.assertEqual(result.agent_trace["review_profile"], "default_review")
         self.assertIn("src/auth.py", reviewer.evidence)
 
@@ -133,6 +137,23 @@ class TestReviewAgent(TestCase):
 
         self.assertEqual(result.risk_level, "high")
         self.assertEqual(result.agent_trace["risk_level"], "high")
+
+    def test_uses_effective_reviewer_mode_and_profile_in_result_and_trace(self):
+        reviewer = FakeReviewer(
+            "## 审查报告\n风险等级：low\n总分: 83分",
+            profile_name="security_review",
+            mode="baseline_review",
+        )
+        task = self._task()
+        task.review_mode = "legacy_mode"
+        task.review_profile = "default_review"
+
+        result = ReviewAgent(file_reader=FakeReader(), reviewer=reviewer).review(task)
+
+        self.assertEqual(result.review_mode, "baseline_review")
+        self.assertEqual(result.review_profile, "security_review")
+        self.assertEqual(result.agent_trace["review_mode"], "baseline_review")
+        self.assertEqual(result.agent_trace["review_profile"], "security_review")
 
 
 if __name__ == "__main__":
