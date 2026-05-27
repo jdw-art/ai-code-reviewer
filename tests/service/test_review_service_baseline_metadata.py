@@ -1,5 +1,6 @@
 import importlib
 import os
+import sqlite3
 import sys
 import tempfile
 from unittest import TestCase, main
@@ -38,6 +39,20 @@ class TestReviewServiceBaselineMetadata(TestCase):
         else:
             os.environ["REVIEW_DB_FILE"] = self.original_review_db_file
         os.unlink(self.tmp.name)
+
+    def _execute_sql(self, statements):
+        with sqlite3.connect(self.tmp.name) as conn:
+            cursor = conn.cursor()
+            for statement in statements:
+                cursor.execute(statement)
+            conn.commit()
+
+    def _fetch_mr_row(self):
+        with sqlite3.connect(self.tmp.name) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM mr_review_log LIMIT 1")
+            return cursor.fetchone()
 
     def test_insert_and_query_baseline_metadata(self):
         entity = self.MergeRequestReviewEntity(
@@ -129,6 +144,89 @@ class TestReviewServiceBaselineMetadata(TestCase):
         self.assertEqual(df.iloc[0]["review_mode"], "")
         self.assertTrue(df.iloc[0]["review_profile"] is None)
         self.assertEqual(df.iloc[0]["risk_level"], "")
+
+    def test_init_db_keeps_legacy_rows_as_empty_metadata(self):
+        self._execute_sql([
+            "DROP TABLE IF EXISTS mr_review_log",
+            """
+            CREATE TABLE mr_review_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_name TEXT,
+                author TEXT,
+                source_branch TEXT,
+                target_branch TEXT,
+                updated_at INTEGER,
+                commit_messages TEXT,
+                score INTEGER,
+                url TEXT,
+                review_result TEXT
+            )
+            """,
+            """
+            INSERT INTO mr_review_log (
+                project_name, author, source_branch, target_branch, updated_at,
+                commit_messages, score, url, review_result
+            ) VALUES (
+                'legacy-repo', 'octocat', 'feature', 'main', 1,
+                '["legacy commit"]', 80, 'https://example.com/mr/1', '历史评论'
+            )
+            """,
+        ])
+
+        self.ReviewService.init_db()
+
+        row = self._fetch_mr_row()
+        self.assertEqual(row["platform"], "")
+        self.assertEqual(row["project_id"], "")
+        self.assertEqual(row["review_mode"], "")
+        self.assertEqual(row["review_profile"], "")
+        self.assertEqual(row["risk_level"], "")
+
+    def test_init_db_clears_pseudo_default_metadata_from_previous_migration(self):
+        self._execute_sql([
+            "DROP TABLE IF EXISTS mr_review_log",
+            """
+            CREATE TABLE mr_review_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT DEFAULT 'github',
+                project_id TEXT DEFAULT '',
+                project_name TEXT,
+                author TEXT,
+                source_branch TEXT,
+                target_branch TEXT,
+                updated_at INTEGER,
+                commit_messages TEXT,
+                score INTEGER,
+                url TEXT,
+                review_result TEXT,
+                additions INTEGER DEFAULT 0,
+                deletions INTEGER DEFAULT 0,
+                last_commit_id TEXT DEFAULT '',
+                agent_trace TEXT DEFAULT '',
+                review_mode TEXT DEFAULT 'baseline_review',
+                review_profile TEXT DEFAULT 'default_review',
+                risk_level TEXT DEFAULT 'medium'
+            )
+            """,
+            """
+            INSERT INTO mr_review_log (
+                project_name, author, source_branch, target_branch, updated_at,
+                commit_messages, score, url, review_result
+            ) VALUES (
+                'legacy-repo', 'octocat', 'feature', 'main', 1,
+                '["legacy commit"]', 80, 'https://example.com/mr/1', '历史评论'
+            )
+            """,
+        ])
+
+        self.ReviewService.init_db()
+
+        row = self._fetch_mr_row()
+        self.assertEqual(row["platform"], "")
+        self.assertEqual(row["project_id"], "")
+        self.assertEqual(row["review_mode"], "")
+        self.assertEqual(row["review_profile"], "")
+        self.assertEqual(row["risk_level"], "")
 
     def test_check_mr_last_commit_id_exists_scopes_by_platform_and_project_id(self):
         github_entity = self.MergeRequestReviewEntity(

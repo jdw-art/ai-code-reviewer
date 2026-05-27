@@ -19,7 +19,7 @@ class ReviewService:
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS mr_review_log (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            platform TEXT DEFAULT 'github',
+                            platform TEXT DEFAULT '',
                             project_id TEXT DEFAULT '',
                             project_name TEXT,
                             author TEXT,
@@ -34,9 +34,9 @@ class ReviewService:
                             deletions INTEGER DEFAULT 0,
                             last_commit_id TEXT DEFAULT '',
                             agent_trace TEXT DEFAULT '',
-                            review_mode TEXT DEFAULT 'baseline_review',
-                            review_profile TEXT DEFAULT 'default_review',
-                            risk_level TEXT DEFAULT 'medium'
+                            review_mode TEXT DEFAULT '',
+                            review_profile TEXT DEFAULT '',
+                            risk_level TEXT DEFAULT ''
                         )
                     ''')
                 cursor.execute('''
@@ -68,7 +68,7 @@ class ReviewService:
                     {
                         "name": "platform",
                         "type": "TEXT",
-                        "default": "'github'"
+                        "default": "''"
                     },
                     {
                         "name": "project_id",
@@ -88,17 +88,17 @@ class ReviewService:
                     {
                         "name": "review_mode",
                         "type": "TEXT",
-                        "default": "'baseline_review'"
+                        "default": "''"
                     },
                     {
                         "name": "review_profile",
                         "type": "TEXT",
-                        "default": "'default_review'"
+                        "default": "''"
                     },
                     {
                         "name": "risk_level",
                         "type": "TEXT",
-                        "default": "'medium'"
+                        "default": "''"
                     }
                 ]
                 cursor.execute(f"PRAGMA table_info('mr_review_log')")
@@ -107,6 +107,21 @@ class ReviewService:
                     if column.get("name") not in current_columns:
                         cursor.execute(f"ALTER TABLE mr_review_log ADD COLUMN {column.get('name')} {column.get('type')} "
                                        f"DEFAULT {column.get('default')}")
+
+                cursor.execute('''
+                    UPDATE mr_review_log
+                    SET platform = '',
+                        review_mode = '',
+                        review_profile = '',
+                        risk_level = ''
+                    WHERE COALESCE(project_id, '') = ''
+                      AND COALESCE(last_commit_id, '') = ''
+                      AND COALESCE(agent_trace, '') = ''
+                      AND COALESCE(platform, '') = 'github'
+                      AND COALESCE(review_mode, '') = 'baseline_review'
+                      AND COALESCE(review_profile, '') = 'default_review'
+                      AND COALESCE(risk_level, '') = 'medium'
+                ''')
 
                 conn.commit()
                 # 添加时间字段索引（默认查询就需要时间范围）

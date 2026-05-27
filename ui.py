@@ -638,8 +638,14 @@ def main_page():
                         f"{row['updated_at']} | {row['project_name']} | {row['source_branch']} -> {row['target_branch']}"
                         for _, row in data.iterrows()
                     ]
-                    selected_label = st.selectbox("选择合并请求", detail_options, key=f"{key_prefix}_review_detail")
-                    selected_row = data.iloc[detail_options.index(selected_label)]
+                    detail_indexes = list(range(len(data)))
+                    selected_index = st.selectbox(
+                        "选择合并请求",
+                        detail_indexes,
+                        key=f"{key_prefix}_review_detail",
+                        format_func=lambda idx: detail_options[idx],
+                    )
+                    selected_row = data.iloc[selected_index]
 
                     meta_col1, meta_col2, meta_col3 = st.columns(3)
                     with meta_col1:
