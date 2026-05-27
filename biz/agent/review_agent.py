@@ -1,4 +1,3 @@
-import re
 from typing import Protocol
 
 from biz.agent.context_collector import ContextCollector
@@ -52,7 +51,7 @@ class ReviewAgent:
             plan = self.planner.create_plan(task, analysis)
             contexts, warnings = self.collector.collect(plan, self.file_reader)
             evidence = self.evidence_builder.build(task, analysis, contexts, warnings)
-            reviewer = self.reviewer or self._default_reviewer()
+            reviewer = self.reviewer or self._default_reviewer(task)
             review_text = reviewer.review_evidence(evidence)
             score = CodeReviewer.parse_review_score(review_text)
             risk_level = self._parse_risk_level(review_text)
@@ -67,9 +66,13 @@ class ReviewAgent:
                 investigated_files=investigated_files,
                 investigation_summary=investigation_summary,
                 warnings=warnings,
+                review_mode=task.review_mode,
+                review_profile=task.review_profile,
                 agent_trace={
                     "mode": "context_investigation",
                     "risk_level": risk_level,
+                    "review_profile": task.review_profile,
+                    "review_mode": task.review_mode,
                     "investigated_files": [
                         {"path": context.path, "reason": context.reason, "truncated": context.truncated}
                         for context in successful_contexts
@@ -84,16 +87,15 @@ class ReviewAgent:
         except Exception as exc:
             return self._classic_fallback(task, exc)
 
-    def _default_reviewer(self) -> EvidenceReviewer:
+    def _default_reviewer(self, task: ReviewTask) -> EvidenceReviewer:
         """延迟加载 Agent reviewer，避免未安装可选模型 SDK 时影响普通导入。"""
         from biz.utils.code_reviewer import AgentCodeReviewer
 
-        return AgentCodeReviewer()
+        return AgentCodeReviewer(review_profile=task.review_profile, repo_full_name=task.project_id)
 
     def _parse_risk_level(self, review_text: str) -> str:
         """从模型输出中解析风险等级，缺失时使用 medium 保守兜底。"""
-        match = re.search(r"risk level[:：]\s*(low|medium|high)", review_text, flags=re.IGNORECASE)
-        return match.group(1).lower() if match else "medium"
+        return CodeReviewer.parse_risk_level(review_text)
 
     def _summary(self, investigated_files: list[str], warnings: list[str]) -> str:
         """生成简短调查摘要，用于结果对象和后续可观测信息。"""
@@ -104,7 +106,10 @@ class ReviewAgent:
 
     def _classic_fallback(self, task: ReviewTask, exc: Exception) -> AgentReviewResult:
         """Agent 编排失败时回到旧版审查，保证 webhook 仍能给出评论。"""
-        reviewer = self.fallback_reviewer or CodeReviewer()
+        reviewer = self.fallback_reviewer or CodeReviewer(
+            review_profile=task.review_profile,
+            repo_full_name=task.project_id,
+        )
         commits_text = ";".join(commit.get("message", "").strip() for commit in task.commits)
         review_text = reviewer.review_and_strip_code(str(task.changes), commits_text)
         score = CodeReviewer.parse_review_score(review_text)
@@ -117,9 +122,13 @@ class ReviewAgent:
             investigated_files=[],
             investigation_summary=self._summary([], warnings),
             warnings=warnings,
+            review_mode=task.review_mode,
+            review_profile=task.review_profile,
             agent_trace={
                 "mode": "classic_fallback",
                 "risk_level": risk_level,
+                "review_profile": task.review_profile,
+                "review_mode": task.review_mode,
                 "investigated_files": [],
                 "warnings": warnings,
             },

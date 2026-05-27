@@ -83,8 +83,10 @@ class TestReviewAgent(TestCase):
 
         self.assertEqual(result.score, 88)
         self.assertEqual(result.risk_level, "medium")
+        self.assertEqual(result.review_profile, "default_review")
         self.assertEqual(result.investigated_files, ["src/auth.py", "tests/test_auth.py", "src/test_auth.py"])
         self.assertEqual(result.agent_trace["mode"], "context_investigation")
+        self.assertEqual(result.agent_trace["review_profile"], "default_review")
         self.assertIn("src/auth.py", reviewer.evidence)
 
     def test_investigated_files_include_related_successful_contexts(self):
