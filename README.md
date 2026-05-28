@@ -124,6 +124,17 @@ python api.py
 streamlit run ui.py --server.port=5002 --server.address=0.0.0.0
 ```
 
+### 项目级 Deep Review
+
+设置 `PROJECT_DEEP_REVIEW_ENABLED=1` 后，Dashboard 会出现“项目 Deep Review”入口。
+
+使用步骤：
+
+1. 选择时间范围，系统会读取该范围内 GitHub baseline review 日志。
+2. 选择项目与 `default_review` / `security_review` 模版。
+3. 点击“发起 Deep Review”创建项目级会话。
+4. 在会话详情中继续提问，系统会围绕该项目的一组 baseline review 日志执行最多两轮的补充调查。
+
 ### 配置 GitLab Webhook
 > github 同理，配置方法与 GitLab 相同
 
@@ -175,4 +186,3 @@ python -m biz.cmd.review
 ```
 
 运行后，请按照命令行中的提示进行操作即可。
-
