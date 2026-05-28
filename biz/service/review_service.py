@@ -217,6 +217,81 @@ class ReviewService:
             return False
 
     @staticmethod
+    def get_mr_review_rows_by_ids(review_log_ids: list[int]) -> list[dict]:
+        """按 id 批量回捞原始 MR review 行，供 Deep Review 会话重放使用。"""
+        if not review_log_ids:
+            return []
+        try:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                conn.row_factory = sqlite3.Row
+                placeholders = ",".join(["?"] * len(review_log_ids))
+                rows = conn.execute(
+                    f"""
+                    SELECT id, platform, project_id, project_name, score, risk_level, review_profile,
+                           review_result, agent_trace, url
+                    FROM mr_review_log
+                    WHERE id IN ({placeholders})
+                    """,
+                    review_log_ids,
+                ).fetchall()
+                row_map = {row["id"]: dict(row) for row in rows}
+                return [row_map[review_log_id] for review_log_id in review_log_ids if review_log_id in row_map]
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving review rows by ids: {e}")
+            return []
+
+    @staticmethod
+    def get_mr_review_rows(
+        authors: list[str] | None = None,
+        project_ids: list[str] | None = None,
+        updated_at_gte: int | None = None,
+        updated_at_lte: int | None = None,
+        platform: str | None = None,
+    ) -> list[dict]:
+        """读取 Deep Review 建会所需的原始 MR review 行。"""
+        try:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                conn.row_factory = sqlite3.Row
+                query = """
+                    SELECT id, platform, project_id, project_name, author,
+                           source_branch, target_branch, updated_at, commit_messages,
+                           score, url, review_result, additions, deletions,
+                           agent_trace, review_mode, review_profile, risk_level
+                    FROM mr_review_log
+                    WHERE 1=1
+                """
+                params = []
+
+                if authors:
+                    placeholders = ",".join(["?"] * len(authors))
+                    query += f" AND author IN ({placeholders})"
+                    params.extend(authors)
+
+                if project_ids:
+                    placeholders = ",".join(["?"] * len(project_ids))
+                    query += f" AND project_id IN ({placeholders})"
+                    params.extend(project_ids)
+
+                if updated_at_gte is not None:
+                    query += " AND updated_at >= ?"
+                    params.append(updated_at_gte)
+
+                if updated_at_lte is not None:
+                    query += " AND updated_at <= ?"
+                    params.append(updated_at_lte)
+
+                if platform:
+                    query += " AND platform = ?"
+                    params.append(platform)
+
+                query += " ORDER BY updated_at DESC, id DESC"
+                rows = conn.execute(query, params).fetchall()
+                return [dict(row) for row in rows]
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving raw review rows: {e}")
+            return []
+
+    @staticmethod
     def insert_push_review_log(entity: PushReviewEntity):
         """插入推送审核日志"""
         try:

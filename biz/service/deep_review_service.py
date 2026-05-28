@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import datetime
 from contextlib import closing
 from typing import Any
 
@@ -90,21 +91,85 @@ class DeepReviewService:
             return cursor.lastrowid
 
     @staticmethod
-    def list_sessions(project_id: str) -> list[dict[str, Any]]:
+    def list_sessions(project_id: str | None = None) -> list[dict[str, Any]]:
         with closing(DeepReviewService._connect()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute(
+            if project_id is None:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM project_deep_review_session
+                    ORDER BY created_at DESC, id DESC
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM project_deep_review_session
+                    WHERE project_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    (project_id,),
+                )
+            rows = cursor.fetchall()
+            return [DeepReviewService._session_row_to_dict(row) for row in rows]
+
+    @staticmethod
+    def get_session(session_id: int) -> dict[str, Any] | None:
+        """按会话 id 读取结构化会话对象。"""
+        with closing(DeepReviewService._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
                 """
                 SELECT *
                 FROM project_deep_review_session
-                WHERE project_id = ?
-                ORDER BY created_at DESC, id DESC
+                WHERE id = ?
                 """,
-                (project_id,),
-            )
-            rows = cursor.fetchall()
-            return [DeepReviewService._session_row_to_dict(row) for row in rows]
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return DeepReviewService._session_row_to_dict(row)
+
+    @staticmethod
+    def create_session_from_review_rows(
+        platform: str,
+        project_id: str,
+        project_name: str,
+        profile_name: str,
+        time_range_start: int,
+        time_range_end: int,
+        review_rows: list[dict[str, Any]],
+        created_by: str,
+    ) -> int:
+        """根据 baseline review rows 构建快照并创建会话。"""
+        from biz.agent.deep_review.project_snapshot import build_project_snapshot
+
+        normalized_rows = review_rows or []
+        snapshot = build_project_snapshot(normalized_rows)
+        return DeepReviewService.create_session(
+            platform=platform,
+            project_id=project_id,
+            project_name=project_name,
+            profile_name=profile_name,
+            time_range_start=time_range_start,
+            time_range_end=time_range_end,
+            included_review_log_ids=[
+                int(row.get("id", 0))
+                for row in normalized_rows
+                if row.get("id") is not None
+            ],
+            baseline_snapshot=snapshot,
+            created_by=created_by,
+            session_summary={
+                "display_time_range": {
+                    "start_date": DeepReviewService._format_display_date(time_range_start),
+                    "end_date": DeepReviewService._format_display_date(time_range_end),
+                }
+            },
+        )
 
     @staticmethod
     def append_message(session_id: int, role: str, content: str) -> int:
@@ -123,6 +188,31 @@ class DeepReviewService:
             DeepReviewService._touch_session(conn=conn, session_id=session_id)
             conn.commit()
             return message_id
+
+    @staticmethod
+    def list_messages(session_id: int) -> list[dict[str, Any]]:
+        """按时间顺序读取会话消息。"""
+        with closing(DeepReviewService._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM project_deep_review_message
+                WHERE session_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "session_id": row["session_id"],
+                    "role": row["role"],
+                    "content": row["content"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
 
     @staticmethod
     def append_run(
@@ -192,6 +282,111 @@ class DeepReviewService:
             return DeepReviewService._run_row_to_dict(row)
 
     @staticmethod
+    def get_latest_run(session_id: int) -> dict[str, Any] | None:
+        """读取会话最近一次执行记录，供 Dashboard 展示摘要。"""
+        with closing(DeepReviewService._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT *
+                FROM project_deep_review_run
+                WHERE session_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return DeepReviewService._run_row_to_dict(row)
+
+    @staticmethod
+    def update_session_state(
+        session_id: int,
+        working_memory: dict[str, Any] | None = None,
+        session_summary: dict[str, Any] | None = None,
+    ):
+        """更新会话工作记忆与摘要，并刷新更新时间。"""
+        current_session = DeepReviewService.get_session(session_id)
+        if current_session is None:
+            raise ValueError(f"session_id={session_id} 不存在")
+
+        next_working_memory = current_session["working_memory"] if working_memory is None else working_memory
+        next_session_summary = current_session["session_summary"] if session_summary is None else session_summary
+
+        with closing(DeepReviewService._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE project_deep_review_session
+                SET working_memory = ?, session_summary = ?, updated_at = strftime('%s', 'now')
+                WHERE id = ?
+                """,
+                (
+                    DeepReviewService._dump_json(next_working_memory),
+                    DeepReviewService._dump_json(next_session_summary),
+                    session_id,
+                ),
+            )
+            conn.commit()
+
+    @staticmethod
+    def ask_session_question(session_id: int, question: str) -> dict[str, Any]:
+        """围绕已持久化会话执行一次提问、回放和状态更新。"""
+        agent_cls = globals().get("ProjectDeepReviewAgent")
+        if agent_cls is None:
+            from biz.agent.deep_review.agent import ProjectDeepReviewAgent as agent_cls
+
+        review_service_cls = globals().get("ReviewService")
+        if review_service_cls is None:
+            from biz.service.review_service import ReviewService as review_service_cls
+        from biz.agent.deep_review.tools.project_review_log_tools import ProjectReviewLogTools
+
+        session = DeepReviewService.get_session(session_id)
+        if session is None:
+            raise ValueError(f"session_id={session_id} 不存在")
+        review_rows = review_service_cls.get_mr_review_rows_by_ids(session.get("included_review_log_ids", []))
+        session_payload = {**session, "review_rows": review_rows}
+        project_tools = ProjectReviewLogTools(review_rows) if review_rows else None
+
+        # 兼容测试替身与真实 Agent：真实 Agent 优先吃原始 rows，替身只保留最小签名。
+        if project_tools is None:
+            agent = agent_cls.from_session(session_payload)
+        else:
+            try:
+                agent = agent_cls.from_session(session_payload, project_tools=project_tools)
+            except TypeError:
+                agent = agent_cls.from_session(session_payload)
+
+        result = agent.answer(question)
+        result_markdown = result.get("result_markdown", "")
+        round_count = int(result.get("round_count", 0))
+        stop_reason = result.get("stop_reason", "")
+        trace_json = result.get("trace") or {}
+        updated_working_memory = result.get("updated_working_memory")
+        updated_session_summary = result.get("updated_session_summary")
+
+        user_message_id = DeepReviewService.append_message(session_id, "user", question)
+        DeepReviewService.append_message(session_id, "assistant", result_markdown)
+        run_id = DeepReviewService.append_run(
+            session_id=session_id,
+            user_message_id=user_message_id,
+            profile_name=session["profile_name"],
+            round_count=round_count,
+            stop_reason=stop_reason,
+            result_markdown=result_markdown,
+            trace_json=trace_json,
+        )
+        DeepReviewService.update_session_state(
+            session_id=session_id,
+            working_memory=updated_working_memory,
+            session_summary=DeepReviewService._merge_session_summary(
+                session.get("session_summary") or {},
+                updated_session_summary or {},
+            ),
+        )
+        return {**result, "run_id": run_id}
+
+    @staticmethod
     def _dump_json(value: dict[str, Any] | list[Any]) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
@@ -232,6 +427,17 @@ class DeepReviewService:
             "trace_json": DeepReviewService._load_json(row["trace_json"]),
             "created_at": row["created_at"],
         }
+
+    @staticmethod
+    def _merge_session_summary(current_summary: dict[str, Any], next_summary: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(current_summary or {})
+        merged.update(next_summary or {})
+        return merged
+
+    @staticmethod
+    def _format_display_date(timestamp: int) -> str:
+        """把时间戳回显为与创建时一致的自然日期。"""
+        return datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
 
     @staticmethod
     def _touch_session(conn: sqlite3.Connection, session_id: int):

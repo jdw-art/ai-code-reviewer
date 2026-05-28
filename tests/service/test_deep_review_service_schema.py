@@ -74,6 +74,35 @@ class TestDeepReviewServiceSchema(TestCase):
         self.assertEqual(sessions[0]["working_memory"], {})
         self.assertEqual(sessions[0]["session_summary"], {})
 
+    def test_list_sessions_without_project_id_returns_all_sessions(self):
+        """不传 project_id 时应返回全部历史会话，供 Dashboard 聚合项目入口。"""
+        session_id_a = self.DeepReviewService.create_session(
+            platform="github",
+            project_id="owner/repo-a",
+            project_name="repo-a",
+            profile_name="default_review",
+            time_range_start=100,
+            time_range_end=200,
+            included_review_log_ids=[1],
+            baseline_snapshot={"review_count": 1},
+            created_by="tester",
+        )
+        session_id_b = self.DeepReviewService.create_session(
+            platform="github",
+            project_id="owner/repo-b",
+            project_name="repo-b",
+            profile_name="security_review",
+            time_range_start=100,
+            time_range_end=200,
+            included_review_log_ids=[2],
+            baseline_snapshot={"review_count": 1},
+            created_by="tester",
+        )
+
+        sessions = self.DeepReviewService.list_sessions()
+
+        self.assertEqual({item["id"] for item in sessions}, {session_id_a, session_id_b})
+
     def test_append_message_and_run_afterwards_can_read_back_structured_run(self):
         session_id = self.DeepReviewService.create_session(
             platform="github",
@@ -108,6 +137,70 @@ class TestDeepReviewServiceSchema(TestCase):
         self.assertEqual(run["user_message_id"], user_message_id)
         self.assertEqual(run["round_count"], 2)
         self.assertEqual(run["trace_json"], {"rounds": [{"topic": "security"}], "summary": {"score": 78}})
+
+    def test_get_latest_run_returns_newest_run_for_session(self):
+        """应按创建时间与自增 id 返回会话最近一次 run。"""
+        session_id = self.DeepReviewService.create_session(
+            platform="github",
+            project_id="owner/repo",
+            project_name="repo",
+            profile_name="default_review",
+            time_range_start=100,
+            time_range_end=200,
+            included_review_log_ids=[1],
+            baseline_snapshot={"review_count": 1},
+            created_by="tester",
+        )
+
+        first_message_id = self.DeepReviewService.append_message(
+            session_id=session_id,
+            role="user",
+            content="第一次问题",
+        )
+        self.DeepReviewService.append_run(
+            session_id=session_id,
+            user_message_id=first_message_id,
+            profile_name="default_review",
+            round_count=1,
+            stop_reason="enough_evidence",
+            result_markdown="项目总体结论\n总分: 70分",
+            trace_json={"rounds": [{"topic": "stability"}]},
+        )
+        second_message_id = self.DeepReviewService.append_message(
+            session_id=session_id,
+            role="user",
+            content="第二次问题",
+        )
+        second_run_id = self.DeepReviewService.append_run(
+            session_id=session_id,
+            user_message_id=second_message_id,
+            profile_name="default_review",
+            round_count=2,
+            stop_reason="round_limit",
+            result_markdown="项目总体结论\n总分: 82分",
+            trace_json={"rounds": [{"topic": "security"}]},
+        )
+
+        latest_run = self.DeepReviewService.get_latest_run(session_id)
+
+        self.assertEqual(latest_run["id"], second_run_id)
+        self.assertEqual(latest_run["round_count"], 2)
+        self.assertEqual(latest_run["result_markdown"], "项目总体结论\n总分: 82分")
+
+    def test_get_latest_run_returns_none_when_session_has_no_runs(self):
+        session_id = self.DeepReviewService.create_session(
+            platform="github",
+            project_id="owner/repo",
+            project_name="repo",
+            profile_name="default_review",
+            time_range_start=100,
+            time_range_end=200,
+            included_review_log_ids=[1],
+            baseline_snapshot={"review_count": 1},
+            created_by="tester",
+        )
+
+        self.assertIsNone(self.DeepReviewService.get_latest_run(session_id))
 
     def test_append_message_rejects_missing_session_id(self):
         with self.assertRaisesRegex(ValueError, "session_id=999 不存在"):
