@@ -1,7 +1,12 @@
+import json
 import os
 import traceback
 from datetime import datetime
 
+from biz.agent.review_agent import ReviewAgent
+from biz.agent.review_profile import resolve_review_profile
+from biz.agent.task import ReviewTask
+from biz.agent.tools.file_reader import GitHubFileReader
 from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
 from biz.event.event_manager import event_manager
 from biz.platforms.gitlab.webhook_handler import filter_changes, MergeRequestHandler, PushHandler
@@ -82,6 +87,11 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
         # 解析Webhook数据
         handler = MergeRequestHandler(webhook_data, gitlab_token, gitlab_url)
         logger.info('Merge Request Hook event received')
+        project_info = webhook_data.get('project', {})
+        gitlab_project_id = project_info.get('path_with_namespace')
+        if not gitlab_project_id:
+            raw_project_id = project_info.get('id') or webhook_data.get('object_attributes', {}).get('target_project_id')
+            gitlab_project_id = str(raw_project_id) if raw_project_id is not None else ""
 
         # 新增：判断是否为draft（草稿）MR
         object_attributes = webhook_data.get('object_attributes', {})
@@ -108,7 +118,14 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
             source_branch = object_attributes.get('source_branch', '')
             target_branch = object_attributes.get('target_branch', '')
             
-            if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, last_commit_id):
+            if ReviewService.check_mr_last_commit_id_exists(
+                "gitlab",
+                gitlab_project_id,
+                project_name,
+                source_branch,
+                target_branch,
+                last_commit_id,
+            ):
                 logger.info(f"Merge Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}.")
                 return
 
@@ -135,7 +152,9 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
 
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        reviewer = CodeReviewer(repo_full_name=gitlab_project_id)
+        review_result = reviewer.review_and_strip_code(str(changes), commits_text)
+        risk_level = CodeReviewer.parse_risk_level(review_result)
 
         # 将review结果提交到Gitlab的 notes
         handler.add_merge_request_notes(f'Auto Review Result: \n{review_result}')
@@ -157,6 +176,11 @@ def handle_merge_request_event(webhook_data: dict, gitlab_token: str, gitlab_url
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                platform="gitlab",
+                project_id=gitlab_project_id,
+                review_mode=reviewer.review_mode_name,
+                review_profile=reviewer.review_profile_name,
+                risk_level=risk_level,
             )
         )
 
@@ -243,12 +267,20 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
 
         # 检查GitHub Pull Request的last_commit_id是否已经存在，如果存在则跳过处理
         github_last_commit_id = webhook_data['pull_request']['head']['sha']
+        repo_full_name = webhook_data['repository']['full_name']
         if github_last_commit_id:
             project_name = webhook_data['repository']['name']
             source_branch = webhook_data['pull_request']['head']['ref']
             target_branch = webhook_data['pull_request']['base']['ref']
             
-            if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, github_last_commit_id):
+            if ReviewService.check_mr_last_commit_id_exists(
+                "github",
+                repo_full_name,
+                project_name,
+                source_branch,
+                target_branch,
+                github_last_commit_id,
+            ):
                 logger.info(f"Pull Request with last_commit_id {github_last_commit_id} already exists, skipping review for {project_name}.")
                 return
 
@@ -275,7 +307,61 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
 
         # review 代码
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        profile = resolve_review_profile("baseline_review", repo_full_name)
+        review_mode = profile.mode
+        review_profile_name = profile.profile_name
+        agent_trace = ""
+        score = 0
+        risk_level = "medium"
+        agent_review_enabled = os.environ.get('AGENT_REVIEW_ENABLED', '0') == '1'
+        if agent_review_enabled:
+            try:
+                # ReviewTask 是 Agent 的平台无关输入，后续分析和规划都只依赖这个结构。
+                task = ReviewTask(
+                    platform="github",
+                    project_id=webhook_data['repository']['full_name'],
+                    project_name=webhook_data['repository']['name'],
+                    source_branch=webhook_data['pull_request']['head']['ref'],
+                    target_branch=webhook_data['pull_request']['base']['ref'],
+                    change_ref=github_last_commit_id,
+                    author=webhook_data['pull_request']['user']['login'],
+                    url=webhook_data['pull_request']['html_url'],
+                    commits=commits,
+                    changes=changes,
+                    access_token=github_token,
+                    platform_url=github_url,
+                    review_mode=review_mode,
+                    review_profile=review_profile_name,
+                )
+                # fork PR 的文件内容存在于 head 仓库；评论和 PR 元数据仍由 base 仓库 handler 处理。
+                head_repo_full_name = webhook_data['pull_request'].get('head', {}).get('repo', {}).get('full_name')
+                read_repo_full_name = head_repo_full_name or repo_full_name
+                file_reader = GitHubFileReader(
+                    repo_full_name=read_repo_full_name,
+                    token=github_token,
+                    max_file_chars=int(os.environ.get('AGENT_MAX_FILE_CHARS', 30000)),
+                )
+                agent_result = ReviewAgent(file_reader=file_reader).review(task)
+                review_result = agent_result.review_text
+                score = agent_result.score
+                agent_trace = json.dumps(agent_result.agent_trace, ensure_ascii=False)
+                risk_level = agent_result.risk_level or CodeReviewer.parse_risk_level(review_result)
+            except Exception as agent_error:
+                # Agent 是增强路径，失败时必须回退到旧审查器，避免 PR 完全没有反馈。
+                logger.error(f"GitHub Agent review failed, falling back to classic review: {agent_error}")
+                review_result = CodeReviewer(
+                    review_profile=review_profile_name,
+                    repo_full_name=repo_full_name,
+                ).review_and_strip_code(str(changes), commits_text)
+                score = CodeReviewer.parse_review_score(review_text=review_result)
+                risk_level = CodeReviewer.parse_risk_level(review_result)
+        else:
+            review_result = CodeReviewer(
+                review_profile=review_profile_name,
+                repo_full_name=repo_full_name,
+            ).review_and_strip_code(str(changes), commits_text)
+            score = CodeReviewer.parse_review_score(review_text=review_result)
+            risk_level = CodeReviewer.parse_risk_level(review_result)
 
         # 将review结果提交到GitHub的 notes
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
@@ -289,7 +375,7 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 target_branch=webhook_data['pull_request']['base']['ref'],
                 updated_at=int(datetime.now().timestamp()),
                 commits=commits,
-                score=CodeReviewer.parse_review_score(review_text=review_result),
+                score=score,
                 url=webhook_data['pull_request']['html_url'],
                 review_result=review_result,
                 url_slug=github_url_slug,
@@ -297,6 +383,12 @@ def handle_github_pull_request_event(webhook_data: dict, github_token: str, gith
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=github_last_commit_id,
+                agent_trace=agent_trace,
+                platform="github",
+                project_id=repo_full_name,
+                review_mode=review_mode,
+                review_profile=review_profile_name,
+                risk_level=risk_level,
             ))
 
     except Exception as e:
@@ -377,14 +469,26 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
 
         head_info = pull_request.get('head') or {}
         base_info = pull_request.get('base') or {}
+        repository = webhook_data.get('repository', {})
+        owner_info = repository.get('owner', {}) or {}
+        owner = owner_info.get('login') or owner_info.get('name') or owner_info.get('username')
+        repo_name = repository.get('name')
+        repo_full_name = repository.get('full_name') or (f"{owner}/{repo_name}" if owner and repo_name else "")
 
         last_commit_id = head_info.get('sha') or pull_request.get('merge_commit_sha') or pull_request.get('last_commit_id')
         if last_commit_id:
-            project_name = webhook_data.get('repository', {}).get('name')
+            project_name = repository.get('name')
             source_branch = head_info.get('ref') or pull_request.get('head_branch', '')
             target_branch = base_info.get('ref') or pull_request.get('base_branch', '')
 
-            if ReviewService.check_mr_last_commit_id_exists(project_name, source_branch, target_branch, last_commit_id):
+            if ReviewService.check_mr_last_commit_id_exists(
+                "gitea",
+                repo_full_name,
+                project_name,
+                source_branch,
+                target_branch,
+                last_commit_id,
+            ):
                 logger.info(f"Pull Request with last_commit_id {last_commit_id} already exists, skipping review for {project_name}.")
                 return
 
@@ -407,11 +511,12 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
             return
 
         commits_text = ';'.join(commit.get('message', '').strip() for commit in commits)
-        review_result = CodeReviewer().review_and_strip_code(str(changes), commits_text)
+        reviewer = CodeReviewer(repo_full_name=repo_full_name)
+        review_result = reviewer.review_and_strip_code(str(changes), commits_text)
+        risk_level = CodeReviewer.parse_risk_level(review_result)
 
         handler.add_pull_request_notes(f'Auto Review Result: \n{review_result}')
 
-        repository = webhook_data.get('repository', {})
         author_info = pull_request.get('user', {}) or webhook_data.get('sender', {}) or {}
 
         event_manager['merge_request_reviewed'].send(
@@ -430,6 +535,11 @@ def handle_gitea_pull_request_event(webhook_data: dict, gitea_token: str, gitea_
                 additions=additions,
                 deletions=deletions,
                 last_commit_id=last_commit_id,
+                platform="gitea",
+                project_id=repo_full_name,
+                review_mode=reviewer.review_mode_name,
+                review_profile=reviewer.review_profile_name,
+                risk_level=risk_level,
             ))
 
     except Exception as e:

@@ -1,4 +1,6 @@
+import os
 import sqlite3
+from contextlib import closing
 
 import pandas as pd
 
@@ -6,17 +8,19 @@ from biz.entity.review_entity import MergeRequestReviewEntity, PushReviewEntity
 
 
 class ReviewService:
-    DB_FILE = "data/data.db"
+    DB_FILE = os.getenv("REVIEW_DB_FILE", "data/data.db")
 
     @staticmethod
     def init_db():
         """初始化数据库及表结构"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS mr_review_log (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            platform TEXT DEFAULT '',
+                            project_id TEXT DEFAULT '',
                             project_name TEXT,
                             author TEXT,
                             source_branch TEXT,
@@ -28,7 +32,11 @@ class ReviewService:
                             review_result TEXT,
                             additions INTEGER DEFAULT 0,
                             deletions INTEGER DEFAULT 0,
-                            last_commit_id TEXT DEFAULT ''
+                            last_commit_id TEXT DEFAULT '',
+                            agent_trace TEXT DEFAULT '',
+                            review_mode TEXT DEFAULT '',
+                            review_profile TEXT DEFAULT '',
+                            risk_level TEXT DEFAULT ''
                         )
                     ''')
                 cursor.execute('''
@@ -58,7 +66,37 @@ class ReviewService:
                 # 为旧版本的mr_review_log表添加last_commit_id字段
                 mr_columns = [
                     {
+                        "name": "platform",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
+                        "name": "project_id",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
                         "name": "last_commit_id",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
+                        "name": "agent_trace",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
+                        "name": "review_mode",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
+                        "name": "review_profile",
+                        "type": "TEXT",
+                        "default": "''"
+                    },
+                    {
+                        "name": "risk_level",
                         "type": "TEXT",
                         "default": "''"
                     }
@@ -69,6 +107,19 @@ class ReviewService:
                     if column.get("name") not in current_columns:
                         cursor.execute(f"ALTER TABLE mr_review_log ADD COLUMN {column.get('name')} {column.get('type')} "
                                        f"DEFAULT {column.get('default')}")
+
+                cursor.execute('''
+                    UPDATE mr_review_log
+                    SET platform = '',
+                        review_mode = '',
+                        review_profile = '',
+                        risk_level = ''
+                    WHERE COALESCE(project_id, '') = ''
+                      AND COALESCE(platform, '') = 'github'
+                      AND COALESCE(review_mode, '') = 'baseline_review'
+                      AND COALESCE(review_profile, '') = 'default_review'
+                      AND COALESCE(risk_level, '') = 'medium'
+                ''')
 
                 conn.commit()
                 # 添加时间字段索引（默认查询就需要时间范围）
@@ -82,33 +133,45 @@ class ReviewService:
     def insert_mr_review_log(entity: MergeRequestReviewEntity):
         """插入合并请求审核日志"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                                INSERT INTO mr_review_log (project_name,author, source_branch, target_branch, 
-                                updated_at, commit_messages, score, url,review_result, additions, deletions, 
-                                last_commit_id)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO mr_review_log (platform, project_id, project_name, author,
+                                source_branch, target_branch, updated_at, commit_messages, score, url,
+                                review_result, additions, deletions, last_commit_id, agent_trace,
+                                review_mode, review_profile, risk_level)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''',
-                               (entity.project_name, entity.author, entity.source_branch,
-                                entity.target_branch, entity.updated_at, entity.commit_messages, entity.score,
-                                entity.url, entity.review_result, entity.additions, entity.deletions,
-                                entity.last_commit_id))
+                               (entity.platform, entity.project_id, entity.project_name, entity.author,
+                                entity.source_branch, entity.target_branch, entity.updated_at,
+                                entity.commit_messages, entity.score, entity.url, entity.review_result,
+                                entity.additions, entity.deletions, entity.last_commit_id,
+                                entity.agent_trace, entity.review_mode, entity.review_profile,
+                                entity.risk_level))
                 conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"Error inserting review log: {e}")
 
     @staticmethod
     def get_mr_review_logs(authors: list = None, project_names: list = None, updated_at_gte: int = None,
-                           updated_at_lte: int = None) -> pd.DataFrame:
+                           updated_at_lte: int = None, include_agent_trace: bool = False,
+                           include_review_metadata: bool = False) -> pd.DataFrame:
         """获取符合条件的合并请求审核日志"""
         try:
-            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                columns = (
+                    "project_name, author, source_branch, target_branch, updated_at, commit_messages, score, url, "
+                    "review_result, additions, deletions"
+                )
+                if include_review_metadata:
+                    columns = "platform, project_id, review_mode, review_profile, risk_level, " + columns
+                if include_agent_trace:
+                    columns += ", agent_trace"
                 query = """
-                            SELECT project_name, author, source_branch, target_branch, updated_at, commit_messages, score, url, review_result, additions, deletions
+                            SELECT {columns}
                             FROM mr_review_log
                             WHERE 1=1
-                            """
+                            """.format(columns=columns)
                 params = []
 
                 if authors:
@@ -136,20 +199,97 @@ class ReviewService:
             return pd.DataFrame()
 
     @staticmethod
-    def check_mr_last_commit_id_exists(project_name: str, source_branch: str, target_branch: str, last_commit_id: str) -> bool:
+    def check_mr_last_commit_id_exists(platform: str, project_id: str, project_name: str, source_branch: str,
+                                       target_branch: str, last_commit_id: str) -> bool:
         """检查指定项目的Merge Request是否已经存在相同的last_commit_id"""
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT COUNT(*) FROM mr_review_log 
-                    WHERE project_name = ? AND source_branch = ? AND target_branch = ? AND last_commit_id = ?
-                ''', (project_name, source_branch, target_branch, last_commit_id))
+                    WHERE platform = ? AND project_id = ? AND project_name = ?
+                    AND source_branch = ? AND target_branch = ? AND last_commit_id = ?
+                ''', (platform, project_id, project_name, source_branch, target_branch, last_commit_id))
                 count = cursor.fetchone()[0]
                 return count > 0
         except sqlite3.DatabaseError as e:
             print(f"Error checking last_commit_id: {e}")
             return False
+
+    @staticmethod
+    def get_mr_review_rows_by_ids(review_log_ids: list[int]) -> list[dict]:
+        """按 id 批量回捞原始 MR review 行，供 Deep Review 会话重放使用。"""
+        if not review_log_ids:
+            return []
+        try:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                conn.row_factory = sqlite3.Row
+                placeholders = ",".join(["?"] * len(review_log_ids))
+                rows = conn.execute(
+                    f"""
+                    SELECT id, platform, project_id, project_name, score, risk_level, review_profile,
+                           review_result, agent_trace, url
+                    FROM mr_review_log
+                    WHERE id IN ({placeholders})
+                    """,
+                    review_log_ids,
+                ).fetchall()
+                row_map = {row["id"]: dict(row) for row in rows}
+                return [row_map[review_log_id] for review_log_id in review_log_ids if review_log_id in row_map]
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving review rows by ids: {e}")
+            return []
+
+    @staticmethod
+    def get_mr_review_rows(
+        authors: list[str] | None = None,
+        project_ids: list[str] | None = None,
+        updated_at_gte: int | None = None,
+        updated_at_lte: int | None = None,
+        platform: str | None = None,
+    ) -> list[dict]:
+        """读取 Deep Review 建会所需的原始 MR review 行。"""
+        try:
+            with closing(sqlite3.connect(ReviewService.DB_FILE)) as conn:
+                conn.row_factory = sqlite3.Row
+                query = """
+                    SELECT id, platform, project_id, project_name, author,
+                           source_branch, target_branch, updated_at, commit_messages,
+                           score, url, review_result, additions, deletions,
+                           agent_trace, review_mode, review_profile, risk_level
+                    FROM mr_review_log
+                    WHERE 1=1
+                """
+                params = []
+
+                if authors:
+                    placeholders = ",".join(["?"] * len(authors))
+                    query += f" AND author IN ({placeholders})"
+                    params.extend(authors)
+
+                if project_ids:
+                    placeholders = ",".join(["?"] * len(project_ids))
+                    query += f" AND project_id IN ({placeholders})"
+                    params.extend(project_ids)
+
+                if updated_at_gte is not None:
+                    query += " AND updated_at >= ?"
+                    params.append(updated_at_gte)
+
+                if updated_at_lte is not None:
+                    query += " AND updated_at <= ?"
+                    params.append(updated_at_lte)
+
+                if platform:
+                    query += " AND platform = ?"
+                    params.append(platform)
+
+                query += " ORDER BY updated_at DESC, id DESC"
+                rows = conn.execute(query, params).fetchall()
+                return [dict(row) for row in rows]
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving raw review rows: {e}")
+            return []
 
     @staticmethod
     def insert_push_review_log(entity: PushReviewEntity):

@@ -20,7 +20,17 @@ import matplotlib as mpl
 import matplotlib.font_manager as fm
 import streamlit as st
 
+from biz.agent.review_profile import PROJECT_DEEP_REVIEW_PROFILES
+from biz.service.deep_review_service import DeepReviewService
 from biz.service.review_service import ReviewService
+from biz.ui import (
+    build_message_timeline,
+    build_project_options,
+    build_project_source_options,
+    build_session_options,
+    filter_rows_by_project,
+    summarize_run_result,
+)
 from matplotlib.ticker import MaxNLocator
 from streamlit_cookies_manager import CookieManager
 
@@ -161,12 +171,21 @@ def authenticate(username, password, remember_password=False):
 
 
 # 获取数据函数
-def get_data(service_func, authors=None, project_names=None, updated_at_gte=None, updated_at_lte=None, columns=None):
-    df = service_func(authors=authors, project_names=project_names, updated_at_gte=updated_at_gte,
-                      updated_at_lte=updated_at_lte)
+def get_data(service_func, authors=None, project_names=None, updated_at_gte=None, updated_at_lte=None, columns=None,
+             include_review_metadata=False):
+    query_kwargs = {
+        "authors": authors,
+        "project_names": project_names,
+        "updated_at_gte": updated_at_gte,
+        "updated_at_lte": updated_at_lte,
+    }
+    if include_review_metadata:
+        query_kwargs["include_review_metadata"] = True
+
+    df = service_func(**query_kwargs)
 
     if df.empty:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=columns) if columns is not None else pd.DataFrame()
 
     if "updated_at" in df.columns:
         df["updated_at"] = df["updated_at"].apply(
@@ -185,8 +204,17 @@ def get_data(service_func, authors=None, project_names=None, updated_at_gte=None
     else:
         df["delta"] = ""
 
+    if columns is None:
+        return df
+
     data = df[columns]
     return data
+
+
+def format_review_metadata(value):
+    if pd.isna(value) or value == "":
+        return "未记录"
+    return value
 
 
 # 隐藏默认的Streamlit菜单和页眉（display:none 避免 visibility:hidden 仍占位导致顶部留白）
@@ -557,44 +585,98 @@ def main_page():
 
     # 根据环境变量决定是否显示 push_tab
     show_push_tab = os.environ.get('PUSH_REVIEW_ENABLED', '0') == '1'
+    deep_review_enabled = os.environ.get("PROJECT_DEEP_REVIEW_ENABLED", "1") == "1"
 
-    if show_push_tab:
+    push_tab = None
+    project_tab = None
+    if show_push_tab and deep_review_enabled:
+        mr_tab, push_tab, project_tab = st.tabs(["合并请求", "代码推送", "项目 Deep Review"])
+    elif show_push_tab:
         mr_tab, push_tab = st.tabs(["合并请求", "代码推送"])
+    elif deep_review_enabled:
+        mr_tab, project_tab = st.tabs(["合并请求", "项目 Deep Review"])
     else:
         mr_tab = st.container()
 
-    def display_data(tab, service_func, columns, column_config):
+    def display_data(tab, service_func, columns, column_config, key_prefix, include_review_metadata=False,
+                     enable_review_detail=False):
         with tab:
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                start_date = st.date_input("开始日期", start_date_default, key=f"{tab}_start_date")
+                start_date = st.date_input("开始日期", start_date_default, key=f"{key_prefix}_start_date")
             with col2:
-                end_date = st.date_input("结束日期", current_date, key=f"{tab}_end_date")
+                end_date = st.date_input("结束日期", current_date, key=f"{key_prefix}_end_date")
 
             start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
             end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
 
-            data = get_data(service_func, updated_at_gte=int(start_datetime.timestamp()),
-                            updated_at_lte=int(end_datetime.timestamp()), columns=columns)
-            df = pd.DataFrame(data)
+            data = get_data(
+                service_func,
+                updated_at_gte=int(start_datetime.timestamp()),
+                updated_at_lte=int(end_datetime.timestamp()),
+                include_review_metadata=include_review_metadata,
+            )
+            df = pd.DataFrame(data if not data.empty else pd.DataFrame(columns=columns))
 
             unique_authors = sorted(df["author"].dropna().unique().tolist()) if not df.empty else []
             unique_projects = sorted(df["project_name"].dropna().unique().tolist()) if not df.empty else []
             with col3:
-                authors = st.multiselect("开发者", unique_authors, default=[], key=f"{tab}_authors")
+                authors = st.multiselect("开发者", unique_authors, default=[], key=f"{key_prefix}_authors")
             with col4:
-                project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{tab}_projects")
+                project_names = st.multiselect("项目名称", unique_projects, default=[], key=f"{key_prefix}_projects")
 
-            data = get_data(service_func, authors=authors, project_names=project_names,
-                            updated_at_gte=int(start_datetime.timestamp()),
-                            updated_at_lte=int(end_datetime.timestamp()), columns=columns)
-            df = pd.DataFrame(data)
+            data = get_data(
+                service_func,
+                authors=authors,
+                project_names=project_names,
+                updated_at_gte=int(start_datetime.timestamp()),
+                updated_at_lte=int(end_datetime.timestamp()),
+                include_review_metadata=include_review_metadata,
+            )
+            df = data[columns] if not data.empty else pd.DataFrame(columns=columns)
+            if include_review_metadata and not df.empty:
+                df = df.copy()
+                for column_name in ["review_mode", "review_profile", "risk_level"]:
+                    if column_name in df.columns:
+                        df[column_name] = df[column_name].apply(format_review_metadata)
 
             st.data_editor(
                 df,
                 use_container_width=True,
                 column_config=column_config
             )
+
+            if enable_review_detail:
+                st.markdown("#### 评论详情")
+                if data.empty:
+                    st.info("当前筛选条件下暂无评论详情。")
+                else:
+                    detail_options = [
+                        f"{row['updated_at']} | {row['project_name']} | {row['source_branch']} -> {row['target_branch']}"
+                        for _, row in data.iterrows()
+                    ]
+                    detail_indexes = list(range(len(data)))
+                    selected_index = st.selectbox(
+                        "选择合并请求",
+                        detail_indexes,
+                        key=f"{key_prefix}_review_detail",
+                        format_func=lambda idx: detail_options[idx],
+                    )
+                    selected_row = data.iloc[selected_index]
+
+                    meta_col1, meta_col2, meta_col3 = st.columns(3)
+                    with meta_col1:
+                        st.markdown(f"**审查模式：** {format_review_metadata(selected_row['review_mode'])}")
+                    with meta_col2:
+                        st.markdown(f"**评论模版：** {format_review_metadata(selected_row['review_profile'])}")
+                    with meta_col3:
+                        st.markdown(f"**风险等级：** {format_review_metadata(selected_row['risk_level'])}")
+
+                    review_result = selected_row.get("review_result", "")
+                    if pd.isna(review_result) or review_result == "":
+                        st.info("该合并请求暂无评论内容。")
+                    else:
+                        st.markdown(review_result)
 
             total_records = len(df)
             average_score = df["score"].mean() if not df.empty else 0
@@ -628,10 +710,175 @@ def main_page():
                 else:
                     st.info("无法显示代码行数图表：缺少必要的数据列")
 
+    def render_project_deep_review(tab):
+        """渲染项目级 Deep Review 工作台。"""
+        with tab:
+            flash_message = st.session_state.pop("deep_review_flash_message", "")
+            if flash_message:
+                st.success(flash_message)
+
+            st.caption("当前阶段仅支持基于 GitHub baseline review 日志发起项目级 Deep Review。")
+
+            filter_col1, filter_col2 = st.columns(2)
+            with filter_col1:
+                start_date = st.date_input("开始日期", start_date_default, key="deep_review_start_date")
+            with filter_col2:
+                end_date = st.date_input("结束日期", current_date, key="deep_review_end_date")
+
+            start_datetime = datetime.datetime.combine(start_date, datetime.time.min)
+            end_datetime = datetime.datetime.combine(end_date, datetime.time.max)
+
+            all_sessions = DeepReviewService.list_sessions()
+            review_rows = ReviewService.get_mr_review_rows(
+                updated_at_gte=int(start_datetime.timestamp()),
+                updated_at_lte=int(end_datetime.timestamp()),
+                platform="github",
+            )
+            baseline_rows = [
+                row for row in review_rows if (row.get("review_mode") or "") == "baseline_review"
+            ]
+            project_options = build_project_source_options(
+                review_rows=baseline_rows,
+                sessions=all_sessions,
+            )
+            if not project_options:
+                st.info("当前没有可用的 Deep Review 项目或历史会话。")
+                return
+
+            project_ids = [project_id for project_id, _ in project_options]
+            project_label_map = {project_id: label for project_id, label in project_options}
+            if st.session_state.get("deep_review_project_id") not in project_ids:
+                st.session_state["deep_review_project_id"] = project_ids[0]
+
+            profile_names = list(PROJECT_DEEP_REVIEW_PROFILES.keys())
+            if st.session_state.get("deep_review_profile_name") not in profile_names:
+                st.session_state["deep_review_profile_name"] = profile_names[0]
+
+            control_col1, control_col2, control_col3 = st.columns([3.6, 2.2, 1.6])
+            with control_col1:
+                selected_project_id = st.selectbox(
+                    "选择项目",
+                    project_ids,
+                    key="deep_review_project_id",
+                    format_func=lambda project_id: project_label_map[project_id],
+                )
+            with control_col2:
+                selected_profile_name = st.selectbox(
+                    "Deep Review 模版",
+                    profile_names,
+                    key="deep_review_profile_name",
+                )
+
+            selected_rows = filter_rows_by_project(baseline_rows, selected_project_id)
+            with control_col3:
+                if st.button("发起 Deep Review", key="create_deep_review_session", use_container_width=True):
+                    if not selected_rows:
+                        st.warning("当前项目在所选时间范围内没有可用于建会的 baseline 日志。")
+                    else:
+                        session_id = DeepReviewService.create_session_from_review_rows(
+                            platform="github",
+                            project_id=selected_project_id,
+                            project_name=selected_rows[0].get("project_name") or selected_project_id,
+                            profile_name=selected_profile_name,
+                            time_range_start=int(start_datetime.timestamp()),
+                            time_range_end=int(end_datetime.timestamp()),
+                            review_rows=selected_rows,
+                            created_by=st.session_state.get("username", "dashboard"),
+                        )
+                        st.session_state["deep_review_session_id"] = session_id
+                        st.session_state["deep_review_flash_message"] = "Deep Review 会话已创建。"
+                        st.rerun()
+
+            sessions = DeepReviewService.list_sessions(project_id=selected_project_id)
+            if not sessions:
+                st.info("当前项目还没有 Deep Review 会话。")
+                return
+
+            session_options = build_session_options(sessions)
+            session_ids = [session_id for session_id, _ in session_options]
+            session_label_map = {session_id: label for session_id, label in session_options}
+            if st.session_state.get("deep_review_session_id") not in session_ids:
+                st.session_state["deep_review_session_id"] = session_ids[0]
+
+            selected_session_id = st.selectbox(
+                "历史会话",
+                session_ids,
+                key="deep_review_session_id",
+                format_func=lambda session_id: session_label_map[session_id],
+            )
+
+            session = DeepReviewService.get_session(selected_session_id)
+            if session is None:
+                st.warning("所选会话不存在，请重新选择。")
+                return
+
+            latest_run = DeepReviewService.get_latest_run(selected_session_id)
+            messages = DeepReviewService.list_messages(selected_session_id)
+            baseline_snapshot = session.get("baseline_snapshot") or {}
+
+            st.subheader("会话详情")
+            meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
+            with meta_col1:
+                st.metric("项目", session["project_name"])
+            with meta_col2:
+                st.metric("模版", session["profile_name"])
+            with meta_col3:
+                st.metric("状态", session["status"])
+            with meta_col4:
+                st.metric("纳入日志", len(session.get("included_review_log_ids") or []))
+
+            st.caption(
+                f"时间范围：{session['time_range_start']} ~ {session['time_range_end']} | "
+                f"基线快照数：{baseline_snapshot.get('review_count', 0)}"
+            )
+            if latest_run:
+                st.info(summarize_run_result(latest_run["result_markdown"]))
+
+            question_key = f"deep_review_question_{selected_session_id}"
+            question = st.text_area(
+                "继续追问",
+                placeholder="例如：最近一周反复出现的问题模式是什么？",
+                key=question_key,
+            )
+            if st.button("发送问题", key=f"deep_review_ask_{selected_session_id}", use_container_width=True):
+                if not question.strip():
+                    st.warning("请输入问题后再发送。")
+                else:
+                    result = DeepReviewService.ask_session_question(selected_session_id, question.strip())
+                    st.session_state[question_key] = ""
+                    st.session_state["deep_review_flash_message"] = (
+                        f"本次调查完成，共执行 {result['round_count']} 轮。"
+                    )
+                    st.rerun()
+
+            st.markdown("#### 对话记录")
+            timeline = build_message_timeline(messages)
+            if not timeline:
+                st.info("当前会话还没有对话记录。")
+                return
+
+            for item in timeline:
+                role_title = "你" if item["role"] == "user" else "Deep Review Agent"
+                with st.expander(role_title, expanded=item["role"] == "assistant"):
+                    st.markdown(item["content"])
+
     # Merge Request 数据展示
-    mr_columns = ["project_name", "author", "source_branch", "target_branch", "updated_at", "commit_messages", "delta",
-                  "score",
-                  "url", 'additions', 'deletions']
+    mr_columns = [
+        "project_name",
+        "author",
+        "source_branch",
+        "target_branch",
+        "updated_at",
+        "review_mode",
+        "review_profile",
+        "risk_level",
+        "commit_messages",
+        "delta",
+        "score",
+        "url",
+        'additions',
+        'deletions',
+    ]
 
     mr_column_config = {
         "project_name": "项目名称",
@@ -639,6 +886,9 @@ def main_page():
         "source_branch": "源分支",
         "target_branch": "目标分支",
         "updated_at": "更新时间",
+        "review_mode": "审查模式",
+        "review_profile": "评论模版",
+        "risk_level": "风险等级",
         "commit_messages": "提交信息",
         "delta": "代码变更",
         "score": st.column_config.ProgressColumn(
@@ -656,7 +906,15 @@ def main_page():
         "deletions": None,
     }
 
-    display_data(mr_tab, ReviewService().get_mr_review_logs, mr_columns, mr_column_config)
+    display_data(
+        mr_tab,
+        ReviewService().get_mr_review_logs,
+        mr_columns,
+        mr_column_config,
+        key_prefix="mr",
+        include_review_metadata=True,
+        enable_review_detail=True,
+    )
 
     # Push 数据展示
     if show_push_tab:
@@ -680,7 +938,16 @@ def main_page():
             "deletions": None,
         }
 
-        display_data(push_tab, ReviewService().get_push_review_logs, push_columns, push_column_config)
+        display_data(
+            push_tab,
+            ReviewService().get_push_review_logs,
+            push_columns,
+            push_column_config,
+            key_prefix="push",
+        )
+
+    if project_tab is not None:
+        render_project_deep_review(project_tab)
 
 
 # 应用入口

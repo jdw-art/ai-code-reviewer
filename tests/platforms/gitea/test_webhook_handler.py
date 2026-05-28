@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# @Time    : 2025/11/12
-# @Author  : yuwenqiang
 from unittest import TestCase, main
 
-from biz.gitea.webhook_handler import PushHandler
+from biz.platforms.gitea.webhook_handler import PushHandler
 
-# @Describe:
+
+# Gitea PushHandler 基础行为测试。
 class TestPushHandler(TestCase):
     def setUp(self):
         """设置测试环境"""
@@ -39,5 +38,4 @@ class TestPushHandler(TestCase):
 
 if __name__ == '__main__':
     main()
-
 
