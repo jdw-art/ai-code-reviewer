@@ -107,19 +107,114 @@ BASELINE_PROFILES = {
     ),
 }
 
+PROJECT_DEEP_REVIEW_PROFILES = {
+    "default_review": ReviewProfile(
+        profile_name="default_review",
+        mode="project_deep_review",
+        dimension_definitions=(
+            ReviewDimension(
+                "stability",
+                "功能稳定性",
+                25,
+                "关注近期多条 PR/MR 叠加后的功能稳定程度。",
+            ),
+            ReviewDimension(
+                "risk_control",
+                "风险控制能力",
+                25,
+                "关注风险是否被及时识别和收敛。",
+            ),
+            ReviewDimension(
+                "testing",
+                "测试与验证充分性",
+                25,
+                "关注跨 PR 的验证覆盖与回归防线。",
+            ),
+            ReviewDimension(
+                "maintainability",
+                "工程可维护性",
+                25,
+                "关注模块边界、重复问题和长期演进成本。",
+            ),
+        ),
+        section_titles=(
+            "项目总体结论",
+            "阶段性高风险主题",
+            "重复出现的问题模式",
+            "热点模块与影响范围",
+            "证据与判断依据",
+            "评分明细",
+            "改进建议",
+            "风险等级",
+            "总分",
+        ),
+        prompt_template_id="project_deep_review_prompt",
+        total_score_formula="sum(dimensions)",
+    ),
+    "security_review": ReviewProfile(
+        profile_name="security_review",
+        mode="project_deep_review",
+        dimension_definitions=(
+            ReviewDimension(
+                "stability",
+                "功能稳定性",
+                25,
+                "关注近期多条 PR/MR 叠加后的功能稳定程度。",
+            ),
+            ReviewDimension(
+                "security",
+                "安全与数据风险控制",
+                25,
+                "关注鉴权、越权、敏感数据和数据一致性。",
+            ),
+            ReviewDimension(
+                "testing",
+                "测试与验证充分性",
+                25,
+                "关注安全路径、异常路径和回归验证。",
+            ),
+            ReviewDimension(
+                "governance",
+                "架构治理情况",
+                25,
+                "关注模块边界、配置治理和长期技术债。",
+            ),
+        ),
+        section_titles=(
+            "项目总体结论",
+            "阶段性高风险主题",
+            "重复出现的问题模式",
+            "热点模块与影响范围",
+            "证据与判断依据",
+            "评分明细",
+            "改进建议",
+            "风险等级",
+            "总分",
+        ),
+        prompt_template_id="project_deep_review_prompt",
+        total_score_formula="sum(dimensions)",
+    ),
+}
+
 
 def resolve_review_profile(mode: str, repo_full_name: str | None) -> ReviewProfile:
     default_name = os.getenv("AGENT_REVIEW_PROFILE", "default_review")
     repo_mapping = os.getenv("AGENT_REVIEW_PROFILE_REPOS", "")
     selected_name = _resolve_repo_mapping(repo_mapping, repo_full_name) or default_name
-    if mode == "baseline_review":
-        return BASELINE_PROFILES.get(selected_name, BASELINE_PROFILES["default_review"])
-    raise ValueError(f"Unsupported review mode: {mode}")
+    profiles = _get_profiles_by_mode(mode)
+    return profiles.get(selected_name, profiles["default_review"])
 
 
 def get_review_profile(mode: str, profile_name: str) -> ReviewProfile:
+    profiles = _get_profiles_by_mode(mode)
+    return profiles.get(profile_name, profiles["default_review"])
+
+
+def _get_profiles_by_mode(mode: str) -> dict[str, ReviewProfile]:
     if mode == "baseline_review":
-        return BASELINE_PROFILES.get(profile_name, BASELINE_PROFILES["default_review"])
+        return BASELINE_PROFILES
+    if mode == "project_deep_review":
+        return PROJECT_DEEP_REVIEW_PROFILES
     raise ValueError(f"Unsupported review mode: {mode}")
 
 

@@ -51,6 +51,25 @@ class TestReviewProfile(TestCase):
         self.assertEqual(profile.profile_name, "default_review")
         self.assertEqual(profile.total_score_formula, "sum(dimensions)")
 
+    def test_project_deep_review_profile_contains_project_sections(self):
+        """项目级 profile 使用项目调查维度与章节。"""
+        profile = get_review_profile("project_deep_review", "security_review")
+
+        self.assertEqual(profile.mode, "project_deep_review")
+        self.assertEqual(profile.prompt_template_id, "project_deep_review_prompt")
+        self.assertEqual(profile.section_titles[0], "项目总体结论")
+        self.assertEqual(profile.dimension_definitions[1].title, "安全与数据风险控制")
+
+    def test_project_deep_review_profile_falls_back_to_default(self):
+        """未知项目级 profile 会回退到默认配置。"""
+        os.environ["AGENT_REVIEW_PROFILE"] = "unknown_profile"
+
+        profile = resolve_review_profile("project_deep_review", "owner/repo")
+
+        self.assertEqual(profile.profile_name, "default_review")
+        self.assertEqual(profile.mode, "project_deep_review")
+        self.assertEqual(profile.section_titles[-1], "总分")
+
 
 if __name__ == "__main__":
     main()

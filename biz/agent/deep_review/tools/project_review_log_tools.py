@@ -1,3 +1,5 @@
+import json
+
 from biz.agent.deep_review.project_snapshot import build_project_snapshot
 
 
@@ -30,19 +32,24 @@ class ProjectReviewLogTools:
                 return row
         return None
 
+    @staticmethod
+    def _normalize_agent_trace(agent_trace: dict | str | None) -> dict:
+        """对持久化 trace 做最小规范化，保留原始字段结构。"""
+        if isinstance(agent_trace, dict):
+            return agent_trace
+        if not agent_trace:
+            return {}
+        try:
+            payload = json.loads(agent_trace)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
     def read_review_trace(self, review_log_id: int) -> dict:
         review = self.read_review_log(review_log_id)
         if review is None:
             return {}
-        for item in self.snapshot["baseline_reviews"]:
-            if item["id"] == review_log_id:
-                return {
-                    "confirmed_issues": item["confirmed_issues"],
-                    "potential_risks": item["potential_risks"],
-                    "investigation_summary": item["investigation_summary"],
-                    "investigated_files": item["investigated_files"],
-                }
-        return {}
+        return self._normalize_agent_trace(review.get("agent_trace"))
 
     def group_reviews_by_module(self) -> list[dict]:
         return self.snapshot["hot_modules"]

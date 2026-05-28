@@ -18,13 +18,14 @@ class BaseReviewer(abc.ABC):
     def __init__(
         self,
         prompt_key: str,
+        review_mode: str = "baseline_review",
         review_profile: str | None = None,
         repo_full_name: str | None = None,
     ):
         self.client = Factory().getClient()
-        resolved_profile = resolve_review_profile("baseline_review", repo_full_name)
+        resolved_profile = resolve_review_profile(review_mode, repo_full_name)
         selected_profile_name = self._select_profile_name(review_profile, resolved_profile.profile_name)
-        self.profile = get_review_profile("baseline_review", selected_profile_name)
+        self.profile = get_review_profile(review_mode, selected_profile_name)
         self.review_mode_name = self.profile.mode
         self.review_profile_name = self.profile.profile_name
         self.repo_full_name = repo_full_name
@@ -92,7 +93,12 @@ class CodeReviewer(BaseReviewer):
     """代码 Diff 级别的审查"""
 
     def __init__(self, review_profile: str | None = None, repo_full_name: str | None = None):
-        super().__init__("baseline_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
+        super().__init__(
+            "baseline_review_prompt",
+            review_mode="baseline_review",
+            review_profile=review_profile,
+            repo_full_name=repo_full_name,
+        )
 
     def review_and_strip_code(self, changes_text: str, commits_text: str = "") -> str:
         """
@@ -187,7 +193,12 @@ class AgentCodeReviewer(BaseReviewer):
 """
 
     def __init__(self, review_profile: str | None = None, repo_full_name: str | None = None):
-        super().__init__("agent_code_review_prompt", review_profile=review_profile, repo_full_name=repo_full_name)
+        super().__init__(
+            "agent_code_review_prompt",
+            review_mode="baseline_review",
+            review_profile=review_profile,
+            repo_full_name=repo_full_name,
+        )
 
     def _requirements_for_budget(self) -> str:
         """返回用于 token 预算估算的输出契约文本。"""
@@ -215,6 +226,78 @@ class AgentCodeReviewer(BaseReviewer):
             {
                 "role": "user",
                 "content": self.prompts["user_message"]["content"].format(
+                    evidence_text=evidence_text,
+                    output_requirements=output_requirements or self.OUTPUT_REQUIREMENTS,
+                ),
+            },
+        ]
+        return self.call_llm(messages)
+
+
+class ProjectDeepReviewReviewer(BaseReviewer):
+    """项目级 Deep Review 的结构化审查器。"""
+
+    OUTPUT_REQUIREMENTS = """请输出 Markdown，并严格使用以下中文标题：
+1. 项目总体结论
+2. 阶段性高风险主题
+3. 重复出现的问题模式
+4. 热点模块与影响范围
+5. 证据与判断依据
+6. 评分明细
+7. 改进建议
+8. 风险等级
+9. 总分
+
+评分要求：
+- 必须给出每个维度的得分和扣分依据
+- 风险等级只能填写 low、medium、high 之一
+- 总分 = 各维度得分直接求和
+- 总分格式必须为：总分: XX分
+"""
+
+    def __init__(self, review_profile: str | None = None, repo_full_name: str | None = None):
+        super().__init__(
+            "project_deep_review_prompt",
+            review_mode="project_deep_review",
+            review_profile=review_profile,
+            repo_full_name=repo_full_name,
+        )
+
+    def review_project(
+        self,
+        question: str,
+        evidence_text: str,
+        output_requirements: str | None = None,
+    ) -> str:
+        """基于项目级结构化证据输出阶段性结论。"""
+        requirements = output_requirements or self.OUTPUT_REQUIREMENTS
+        review_max_tokens = int(os.getenv("REVIEW_MAX_TOKENS", 10000))
+        reserved_tokens = count_tokens(question) + count_tokens(requirements)
+        evidence_max_tokens = max(review_max_tokens - reserved_tokens, 1)
+        if count_tokens(evidence_text) > evidence_max_tokens:
+            evidence_text = truncate_text_by_tokens(evidence_text, evidence_max_tokens)
+        review_result = self.review_code(
+            question=question,
+            evidence_text=evidence_text,
+            output_requirements=requirements,
+        ).strip()
+        if review_result.startswith("```markdown") and review_result.endswith("```"):
+            return review_result[11:-3].strip()
+        return review_result
+
+    def review_code(
+        self,
+        question: str,
+        evidence_text: str,
+        output_requirements: str | None = None,
+    ) -> str:
+        """组装项目级问答消息，复用现有 prompt/profile 机制。"""
+        messages = [
+            self.prompts["system_message"],
+            {
+                "role": "user",
+                "content": self.prompts["user_message"]["content"].format(
+                    question=question,
                     evidence_text=evidence_text,
                     output_requirements=output_requirements or self.OUTPUT_REQUIREMENTS,
                 ),

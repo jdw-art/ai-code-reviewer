@@ -78,6 +78,50 @@ low
                 "agent_trace": '{"investigated_files":[{"path":"worker/cache.py","reason":"Read changed file context for the PR head ref.","truncated":false}]}',
                 "url": "https://github.com/owner/repo/pull/3",
             },
+            {
+                "id": 4,
+                "project_id": "owner/repo",
+                "project_name": "repo",
+                "score": 84,
+                "risk_level": "medium",
+                "review_profile": "default_review",
+                "review_result": "总分: 84分",
+                "agent_trace": {
+                    "mode": "context_investigation",
+                    "review_mode": "baseline_review",
+                    "warnings": ["上下文截断"],
+                    "investigated_files": [
+                        {
+                            "path": "service/user.py",
+                            "reason": "Read related source file.",
+                            "truncated": True,
+                        }
+                    ],
+                },
+                "url": "https://github.com/owner/repo/pull/4",
+            },
+            {
+                "id": 5,
+                "project_id": "owner/repo",
+                "project_name": "repo",
+                "score": 70,
+                "risk_level": "medium",
+                "review_profile": "default_review",
+                "review_result": "总分: 70分",
+                "agent_trace": "",
+                "url": "https://github.com/owner/repo/pull/5",
+            },
+            {
+                "id": 6,
+                "project_id": "owner/repo",
+                "project_name": "repo",
+                "score": 65,
+                "risk_level": "medium",
+                "review_profile": "default_review",
+                "review_result": "总分: 65分",
+                "agent_trace": "{invalid-json",
+                "url": "https://github.com/owner/repo/pull/6",
+            },
         ]
 
     def test_list_project_review_logs_returns_brief_rows(self):
@@ -104,6 +148,40 @@ low
 
         self.assertEqual(groups[0]["title"], "缺少鉴权")
         self.assertEqual(groups[0]["count"], 2)
+
+    def test_read_review_trace_returns_normalized_original_json_payload(self):
+        tools = ProjectReviewLogTools(self.rows)
+
+        trace = tools.read_review_trace(1)
+
+        self.assertEqual(trace["investigated_files"][0]["path"], "backend/auth.py")
+        self.assertEqual(trace["investigated_files"][0]["reason"], "Read changed file context for the PR head ref.")
+        self.assertIs(trace["investigated_files"][0]["truncated"], False)
+
+    def test_read_review_trace_preserves_original_dict_payload(self):
+        tools = ProjectReviewLogTools(self.rows)
+
+        trace = tools.read_review_trace(4)
+
+        self.assertEqual(trace["mode"], "context_investigation")
+        self.assertEqual(trace["review_mode"], "baseline_review")
+        self.assertEqual(trace["warnings"], ["上下文截断"])
+        self.assertEqual(trace["investigated_files"][0]["reason"], "Read related source file.")
+        self.assertIs(trace["investigated_files"][0]["truncated"], True)
+
+    def test_read_review_trace_returns_empty_dict_for_empty_value(self):
+        tools = ProjectReviewLogTools(self.rows)
+
+        trace = tools.read_review_trace(5)
+
+        self.assertEqual(trace, {})
+
+    def test_read_review_trace_returns_empty_dict_for_invalid_json(self):
+        tools = ProjectReviewLogTools(self.rows)
+
+        trace = tools.read_review_trace(6)
+
+        self.assertEqual(trace, {})
 
 
 if __name__ == "__main__":
